@@ -1,0 +1,33 @@
+{
+    "pipeline": {
+        "total_calls": 65,
+        "cache_hits": 9,
+        "semantic_hits": 0,
+        "model_calls": 56,
+        "cache_hit_rate_pct": 13.8,
+        "avg_latency_ms": 13.243,
+        "max_latency_ms": 189.015,
+        "min_latency_ms": 0.004,
+        "latency_distribution": {
+            "<1ms": 9,
+            "1-5ms": 0,
+            "5-10ms": 8,
+            "10-20ms": 47,
+            "20-50ms": 0,
+            "50ms+": 1
+        }
+    },
+    "cache": {
+        "size": 68,
+        "max_size": 1000,
+        "hits_exact": 9,
+        "hits_semantic": 0,
+        "misses": 68,
+        "hit_rate": "11.7%"
+    },
+    "concurrency": {
+        "pending_tasks": 0,
+        "max_queue_size": 16,
+        "is_busy": false
+    }
+}

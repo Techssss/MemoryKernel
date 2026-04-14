@@ -29,8 +29,9 @@ class RuleBasedExtractor(BaseExtractor):
         # Basic sentence structure matching: Subject + Verb/Relation + Object
         # Focus on standardizing English/Vietnamese developer-specific terms
         self.patterns = [
-            re.compile(r'(?i)^(user|project|tao|tôi|hệ thống|system)\s+(thích|ghét|dùng|sử dụng|cần|muốn|yêu cầu|likes|uses|hates|needs|wants|requires)\s+(.+)$')
+            re.compile(r'(?i)^(user|project|tao|tôi|hệ thống|system|architecture|backend|frontend)\s+(thích|ghét|dùng|sử dụng|cần|muốn|yêu cầu|biết|sống|likes|uses|hates|needs|wants|requires|is|lives|works|knows)\s+(.+)$')
         ]
+
 
     def _normalize_relation(self, verb: str) -> str:
         """Standardize synonyms into a canonical dictionary of relations."""

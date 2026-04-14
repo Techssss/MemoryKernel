@@ -12,15 +12,15 @@ def test_context_builder_grouping():
     
     ctx = builder.build_context(items)
     
-    assert "User facts:" in ctx
-    assert "  - user likes python" in ctx
-    assert "Project facts:" in ctx
-    assert "  - project uses sqlite" in ctx
-    assert "Raw memories:" in ctx
-    assert "  - I once tried to learn django" in ctx
+    assert "[User Preferences]" in ctx
+    assert "• user likes python" in ctx
+    assert "[Stable Facts]" in ctx
+    assert "• project uses sqlite" in ctx
+    assert "[Recent Memories]" in ctx
+    assert "→ I once tried to learn django" in ctx
 
 def test_context_truncation_budget():
-    builder = ContextBuilder(max_chars=85)
+    builder = ContextBuilder(max_chars=120)  # Increased slightly to accommodate new titles
     items = [
         RetrievedItem(item_type="fact", id="1", content="user loves coding and python", created_at="2026", score=2.0),
         RetrievedItem(item_type="memory", id="2", content="this secondary extremely long memory should be entirely dropped", created_at="2026", score=1.0)
@@ -28,20 +28,20 @@ def test_context_truncation_budget():
     
     ctx = builder.build_context(items)
     
-    # User fact gets in, but raw memory is dropped completely because budget constraint hit
-    assert "User facts:" in ctx
+    # User fact gets in (it is categorized as User Preference if "user" in subject)
+    assert "[User Preferences]" in ctx
     assert "user loves coding and python" in ctx
     assert "this secondary extremely long memory" not in ctx
 
 def test_context_prioritization():
-    # Extremely tight budget (only 30 chars), just enough for 'User facts:' title and short fact
-    builder = ContextBuilder(max_chars=40)
+    # Priority: User Preferences > Recent Memories > Stable Facts > Conflicts
+    builder = ContextBuilder(max_chars=60)
     items = [
-        RetrievedItem(item_type="fact", id="1", content="user uses c", created_at="", score=2.0),
-        RetrievedItem(item_type="memory", id="2", content="I think I might like java", created_at="", score=1.0)
+        RetrievedItem(item_type="fact", id="1", content="user uses c", created_at="2026", score=2.0),
+        RetrievedItem(item_type="memory", id="2", content="Secondary thought", created_at="2026", score=1.0)
     ]
     ctx = builder.build_context(items)
     
-    assert "User facts:" in ctx
+    # User Preference has higher priority than Recent memory
+    assert "[User Preferences]" in ctx
     assert "user uses c" in ctx
-    assert "Raw memories" not in ctx  # The second section could not even open

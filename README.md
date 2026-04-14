@@ -20,22 +20,24 @@ Most engineers default to tossing chat logs into a Vector Database. This breaks 
 
 - **Dual-Layer Storage:** Maintains raw immutable chat logs *and* computable Structured Facts.
 - **Auto-Reconciliation:** Automatically resolves conflicting facts (shadows the old, elevates the new).
-- **Token-Aware Context Builder:** Truncates payloads scientifically. Prioritizes rigid facts over chaotic noise.
-- **Zero-Friction MVP:** Powered entirely by standard library SQLite. No ORMs, no heavy external dependencies.
+- **Advanced Scored Retrieval (v0.3):** 5-dimensional ranking system combining vector similarity, keyword matching, importance, recency (forgetting curve), and confidence.
+- **RAM-First Performance:** Hybrid indexing system for sub-millisecond retrieval in production environments.
+- **Async-First Architecture:** Decoupled CPU-bound embedding tasks via a daemon/worker system to prevent event-loop blocking.
+- **Token-Aware Context Builder:** Truncates payloads scientifically. Prioritizes User Preferences, Recent Memories, and Stable Facts.
 - **Deep Observability:** Built-in `memk doctor` and a dedicated `decisions` telemetry table.
 
 ---
 
 ## 🚀 Installation
 
-MemoryKernel works right out of the box.
+MemoryKernel works right out of the box with standard Python 3.10+.
 
 ```bash
 # Clone the repository
 git clone https://github.com/your-username/MemoryKernel.git
 cd MemoryKernel
 
-# Install as an editable package
+# Install dependencies (including optional ML features)
 pip install -e .
 ```
 
@@ -48,10 +50,10 @@ memk --help
 
 ## ⚡ Quickstart & CLI Examples
 
-MemoryKernel comes with a rich CLI (`Typer` + `Rich`) that interacts flawlessly with the core SQLite adapter.
+MemoryKernel comes with a rich CLI (`Typer` + `Rich`) that interacts flawlessly with the core engine.
 
 ### 1. Initialize the Kernel
-Bootstrap your local file-backed database `mem.db` cleanly.
+Bootstrap your local file-backed database `mem.db` and initialize the schema.
 ```bash
 memk init
 ```
@@ -65,22 +67,26 @@ memk add "System uses Java"
 # Later on, the system evolves...
 memk add "Actually, System uses Python now"
 ```
-*(MemoryKernel will automatically demote "Java" and reconcile the active truth to "Python".)*
+*(MemoryKernel will automatically demographic "Java" and reconcile the active truth to "Python".)*
 
 ### 3. Build Token-Aware LLM Payload
-Inject directly into your LLM System Prompt. The context builder cleanly groups subjects and fits them tightly within your token budget limits.
+Inject directly into your LLM System Prompt. The context builder cleanly groups subjects and fits them tightly within your token budget limits using strict prioritization.
 ```bash
 memk build-context "tech stack" --max-chars 500
 ```
 **Output Example:**
-```yaml
---- BEGIN CONTEXT ---
-Project facts:
-  - project architecture relies on dependency injection
-  - system uses Python
-Raw memories:
-  - ... [TRUNCATED_DUE_TO_BUDGET]
---- END CONTEXT ---
+```text
+[User Preferences]
+• system uses Python
+
+[Recent Memories]
+→ Project architecture relies on dependency injection
+
+[Stable Facts]
+• user prefers dark mode
+
+[Summary]
+Retrieved 2 facts and 1 context logs related to: system, project.
 ```
 
 ### 4. Health & Observability check
@@ -93,11 +99,12 @@ memk doctor
 
 ## 🏗 Architecture Overview
 
-MemoryKernel follows strict [Clean Architecture/Backend Dev Guidelines](https://github.com/sickn33/antigravity-awesome-skills).
+MemoryKernel follows strict [Clean Architecture](https://github.com/sickn33/antigravity-awesome-skills).
 
-- **`memk.storage`**: No-ORM, multi-table SQLite engine enforcing data immutability for `memories`, mutable states for `facts`, and auditability for `decisions`.
-- **`memk.extraction`**: Pluggable Extractor engines. The MVP (`RuleBasedExtractor`) converts raw strings into SPO (Subject-Predicate-Object) Pydantic Models. Designed to be hot-swapped with upcoming OpenAI/Anthropic extractors.
-- **`memk.retrieval`**: Retrieves and implicitly merges/scores disparate memory tables. Ensures `Active Facts` rank mathematically higher than unstructured memories.
+- **`memk.storage`**: No-ORM, multi-table SQLite engine (v0.3 supports metadata like importance/confidence).
+- **`memk.core.scorer`**: The brain of the ranking system. Implements exponential decay for recency and weighted factors for hybrid retrieval.
+- **`memk.retrieval`**: Pluggable strategies (`Keyword`, `Hybrid`, `Scored`). `ScoredRetriever` uses RAM-caching and vector similarity for high-performance lookups.
+- **`memk.server`**: Optional daemon mode for ultra-low latency. Provides a FastAPI-based IPC layer for async agentic workflows.
 - **`memk.context`**: The compiler. Reads the `Retrieval` payload and enforces hard bounds. Protects the LLM from token overflow.
 
 ---
@@ -108,9 +115,11 @@ MemoryKernel follows strict [Clean Architecture/Backend Dev Guidelines](https://
 - [x] Triplet Extraction & Normalization 
 - [x] Fact Strict-Reconciliation algorithm
 - [x] Observability (`memk doctor`)
-- [ ] **VectorDB Integration:** Upgrade retrieval from SQL `LIKE` to Semantic Hybrid Search using `sqlite-vss`.
+- [x] **Semantic Hybrid Search:** Vector-based retrieval integrated with SQL.
+- [x] **Decay & Recency Bias:** Native forgetting curve mathematical models.
+- [x] **Async Architecture:** Daemon-mode for non-blocking I/O.
 - [ ] **LLM-Based Extraction Class:** Add drop-in APIs for OpenAI/Anthropic extraction.
-- [ ] **Decay & Recency Bias:** Native forgetting curve mathematical models.
+- [ ] **Graph Visualization:** Web-based dashboard to visualize the knowledge graph.
 
 ---
 
@@ -119,13 +128,12 @@ MemoryKernel follows strict [Clean Architecture/Backend Dev Guidelines](https://
 This project embraces pragmatic, no-nonsense backend development guidelines.
 
 1. Keep it **Local-First**.
-2. **Do Not Overengineer:** Standard Library Python (`sqlite3`, `uuid`, etc.) is preferred over heavy frameworks unless justified.
+2. **Do Not Overengineer:** Standard Library Python (`sqlite3`, `uuid`, etc.) is preferred unless performance justifies external libraries.
 3. Every new core mechanic MUST have matching TDD rules in `tests/`.
 
 To run the local test suite:
 ```bash
-pip install pytest
-pytest tests/ -v
+python -m pytest
 ```
 
 **License:** MIT

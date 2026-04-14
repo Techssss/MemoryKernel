@@ -29,13 +29,14 @@ def test_retrieval_returns_facts_before_memories(test_db, retriever):
     assert "User wants to build" in results[1].content
 
 def test_retrieval_newer_entries_first(test_db, retriever):
-    target_keyword = "uses"
-    test_db.insert_fact("user", "uses", "Go")
-    test_db.insert_fact("user", "uses", "Rust")
-    
-    results = retriever.retrieve(target_keyword)
+    # Use DISTINCT predicates so both facts are independently active
+    # (same subject+predicate would trigger reconciliation → only latest stays active)
+    test_db.insert_fact("user", "tried", "Go")
+    test_db.insert_fact("user", "adopted", "Rust")
+
+    results = retriever.retrieve("user")
     assert len(results) == 2
-    # The second one inserted (Rust) should be ranked higher due to date sorting
+    # The second one inserted (Rust / adopted) should be ranked higher due to date sorting
     assert "Rust" in results[0].content
     assert "Go" in results[1].content
 

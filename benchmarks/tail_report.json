@@ -1,0 +1,36 @@
+{
+    "total_requests": 170,
+    "slow_request_count": 50,
+    "slow_rate_pct": 29.41,
+    "latency_percentiles": {
+        "p50": 0.013,
+        "p90": 20.387,
+        "p95": 21.92,
+        "p99": 25.036
+    },
+    "top_slow_paths": [
+        {
+            "operation": "add_memory",
+            "root_cause": "normal",
+            "degradation_reason": "",
+            "degraded": false,
+            "count": 40,
+            "avg_ms": 18.5,
+            "max_ms": 22.92
+        },
+        {
+            "operation": "add_memory",
+            "root_cause": "cold_embedding",
+            "degradation_reason": "",
+            "degraded": false,
+            "count": 10,
+            "avg_ms": 22.95,
+            "max_ms": 25.58
+        }
+    ],
+    "cause_frequency": {
+        "normal": 54,
+        "cold_embedding": 10,
+        "cache_hit": 106
+    }
+}
