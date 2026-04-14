@@ -1,0 +1,3 @@
+"""
+memk - MemoryKernel main package
+"""
