@@ -1,19 +1,56 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.db
-*.db-shm
-*.db-wal
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
 .pytest_cache/
-.kiro/
-.agents/
-skills/
-*.pid
-*.log
-test_output*.txt
+
+# Virtual Environment
 .venv/
 venv/
 env/
-dist/
-build/
-*.egg-info/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Kiro/Agent files
+.kiro/
+.agents/
+skills/
+skills-lock.json
+
+# Logs
+*.log
+*.pid
+test_output*.txt
+
+# MemoryKernel Workspace
+.memk/index/
+.memk/cache/
+.memk/sync/
+.memk/state/*.db-shm
+.memk/state/*.db-wal
+
+# Database files (local development)
+*.db
+*.db-journal
+
+# Temporary files
+tmp/
+tmp_*/
+Demo/
+Documents/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini

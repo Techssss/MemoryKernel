@@ -2,10 +2,14 @@ import typer
 import requests
 import time
 import datetime
+import logging
+from typing import List, Dict, Any, Optional
 from rich.console import Console
 from rich.table import Table
 from memk.server.manager import URL, is_running
 from memk.core.service import MemoryKernelService
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     help="MemoryKernel (memk) - Local-first memory infrastructure for AI agents",
@@ -19,6 +23,17 @@ def get_service() -> MemoryKernelService:
     if _service_instance is None:
         _service_instance = MemoryKernelService()
     return _service_instance
+
+def get_workspace_id() -> str:
+    """Resolve the brain ID from the local manifest."""
+    from memk.workspace.manager import WorkspaceManager
+    try:
+        ws = WorkspaceManager()
+        if ws.is_initialized():
+            return ws.get_manifest().brain_id
+    except:
+        pass
+    return "default"
 
 # --- Lifecycle Commands ---
 
@@ -36,25 +51,51 @@ def stop():
 
 @app.command()
 def status():
-    """Check the status of the local daemon."""
-    from memk.server import manager
-    stat = manager.get_status()
+    """Check the status of the local daemon and workspace."""
+    from memk.workspace.manager import WorkspaceManager
+    from memk.server import manager as server_manager
+    
+    # 1. Workspace Status
+    ws = WorkspaceManager()
+    info = ws.get_status_info()
+    
+    console.print("[bold blue]📂 Workspace Status[/bold blue]")
+    console.print(f"  Root: [cyan]{info['root']}[/cyan]")
+    console.print(f"  Initialized: [{'green' if info['initialized'] else 'red'}]{info['initialized']}[/{'green' if info['initialized'] else 'red'}]")
+    
+    if info['initialized']:
+        console.print(f"  Brain ID: [magenta]{info['brain_id']}[/magenta]")
+        console.print(f"  Generation: [yellow]{info['generation']}[/yellow]")
+    
+    console.print(f"\n[bold blue]🤖 Daemon Status[/bold blue]")
+    stat = server_manager.get_status()
     color = "green" if "RUNNING" in stat else "red"
-    console.print(f"Daemon Status: [{color}]{stat}[/{color}]")
-    console.print(f"Endpoint: [cyan]{manager.URL}[/cyan]")
+    console.print(f"  Status: [{color}]{stat}[/{color}]")
+    console.print(f"  Endpoint: [cyan]{server_manager.URL}[/cyan]")
 
 # --- Core Commands ---
 
 @app.command()
 def init():
-    """Initialize the MemoryKernel storage."""
+    """Initialize the MemoryKernel workspace and brain state."""
+    from memk.workspace.manager import WorkspaceManager
     try:
+        ws = WorkspaceManager()
+        is_reinit = ws.is_initialized()
+        
+        manifest = ws.init_workspace()
+        
+        # Initialize DB at the correct path
         service = get_service()
-        service.ensure_initialized()
-        service.runtime.db.init_db()
-        console.print("[green]MemoryKernel database initialized successfully.[/green]")
+        runtime = service.global_runtime.get_workspace_runtime(manifest.brain_id, ws.get_db_path())
+        runtime.db.init_db()
+        
+        msg = "re-initialized" if is_reinit else "initialized"
+        console.print(f"[green]MemoryKernel workspace {msg} successfully.[/green]")
+        console.print(f"Brain ID: [magenta]{manifest.brain_id}[/magenta]")
+        console.print(f"Path: [dim]{ws.memk_path}[/dim]")
     except Exception as e:
-        console.print(f"[bold red]Failed to initialize database:[/bold red] {e}")
+        console.print(f"[bold red]Failed to initialize workspace:[/bold red] {e}")
         raise typer.Exit(code=1)
 
 @app.command()
@@ -62,19 +103,22 @@ def add(
     content: str,
     importance: float = typer.Option(0.5, "--importance", "-i", min=0, max=1, help="Priority of this memory."),
     confidence: float = typer.Option(1.0, "--confidence", "-c", min=0, max=1, help="Certainty of this memory."),
-    workspace: str = typer.Option("default", "--workspace", "-w", help="Workspace scope.")
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")
 ):
     """Add a new memory fact (Write-Time Embedding)."""
+    workspace_id = workspace or get_workspace_id()
     try:
         if is_running():
             resp = requests.post(f"{URL}/add", json={
-                "content": content, "importance": importance, "confidence": confidence, "workspace_id": workspace
+                "content": content, "importance": importance, "confidence": confidence, "workspace_id": workspace_id
             }).json()
-            console.print(f"[green]Added via Daemon![/green] ID: [cyan]{resp['id'][:8]}...[/cyan]")
+            console.print(f"[green]Added via Daemon![/green] ID: [cyan]{resp['id'][:8]}...[/cyan] (WS: {workspace_id[:8]}...)")
             return
 
         service = get_service()
-        res = service.add_memory(content, importance, confidence, workspace)
+        # Note: add_memory is async in service, but CLI is sync for now.
+        import asyncio
+        res = asyncio.run(service.add_memory(content, importance, confidence, workspace_id))
         console.print(f"[green]Added memory successfully![/green] ID: [cyan]{res['id'][:8]}...[/cyan]")
     except Exception as e:
         console.print(f"[bold red]Failed to add memory:[/bold red] {e}")
@@ -84,16 +128,18 @@ def add(
 def search(
     query: str, 
     limit: int = typer.Option(10, "--limit", "-l", help="Number of results."),
-    workspace: str = typer.Option("default", "--workspace", "-w", help="Workspace scope.")
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")
 ):
     """Retrieve memories using in-memory vector search."""
+    workspace_id = workspace or get_workspace_id()
     try:
         if is_running():
-            resp = requests.post(f"{URL}/search", json={"query": query, "limit": limit, "workspace_id": workspace}).json()
+            resp = requests.post(f"{URL}/search", json={"query": query, "limit": limit, "workspace_id": workspace_id}).json()
             results = resp["results"]
         else:
             service = get_service()
-            results = service.search(query, limit, workspace)
+            import asyncio
+            results = asyncio.run(service.search(query, limit, workspace_id))
 
         table = Table(title=f"Search Results for: '{query}'")
         table.add_column("Type", style="dim")
@@ -108,69 +154,129 @@ def search(
         console.print(f"[bold red]Search failed:[/bold red] {e}")
 
 @app.command()
-def build_context(
-    query: str, 
-    max_chars: int = typer.Option(500, help="Maximum characters for token budget."),
-    threshold: float = typer.Option(0.3, help="Minimum score to include."),
-    workspace: str = typer.Option("default", "--workspace", "-w", help="Workspace scope.")
+def context(
+    query: str,
+    max_chars: int = typer.Option(500, "--limit", "-l", help="Max window size."),
+    threshold: float = typer.Option(0.3, "--threshold", "-t", help="Relevance threshold."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")
 ):
-    """Build compact, LLM-ready context (Fast retrieval)."""
+    """Compile optimized RAG context for AI agents."""
+    workspace_id = workspace or get_workspace_id()
     try:
         if is_running():
             resp = requests.post(f"{URL}/context", json={
-                "query": query, "max_chars": max_chars, "threshold": threshold, "workspace_id": workspace
+                "query": query, "max_chars": max_chars, "threshold": threshold, "workspace_id": workspace_id
             }).json()
-            context = resp["context"]
+            ctx = resp["context"]
         else:
             service = get_service()
-            context = service.build_context(query, max_chars, threshold, workspace)
+            import asyncio
+            ctx = asyncio.run(service.build_context(query, max_chars, threshold, workspace_id))
 
         console.print("\n[bold]Generated Context:[/bold]")
         console.print(f"[dim]{'-' * 40}[/dim]")
-        console.print(context)
+        console.print(ctx)
         console.print(f"[dim]{'-' * 40}[/dim]")
     except Exception as e:
         console.print(f"[bold red]Context build failed:[/bold red] {e}")
 
 @app.command()
-def doctor():
-    """Run diagnostics on the memory kernel."""
+def doctor(workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")):
+    """Deep diagnostics for memory indexing & storage with production metrics."""
+    workspace_id = workspace or get_workspace_id()
     try:
         if is_running():
-            data = requests.get(f"{URL}/doctor").json()
+            diag = requests.get(f"{URL}/doctor", params={"workspace_id": workspace_id}).json()
         else:
             service = get_service()
-            data = service.get_diagnostics()
+            diag = service.get_diagnostics(workspace_id)
 
-        stats = data["db_stats"]
-        states = data["memory_health"]
+        stats = diag["db_stats"]
+        states = diag["memory_health"]
 
-        console.print("[bold blue]🩺 MemoryKernel Doctor Report[/bold blue]")
-        console.print(f"📦 Total Memories: [cyan]{stats['total_memories']}[/cyan]")
-        console.print(f"🧠 Total Facts:    [cyan]{stats['total_active_facts']}[/cyan]")
-        console.print(f"\n[bold]🌡  Memory Health[/bold]")
+        console.print("[bold blue]🩺 MemoryKernel Production Status[/bold blue]")
+        console.print()
+        
+        # Database Section
+        console.print("[bold]💾 Database[/bold]")
+        console.print(f"  Schema Version: [cyan]{stats.get('schema_version', 'unknown')}[/cyan]")
+        console.print(f"  Journal Mode: [cyan]{stats.get('journal_mode', 'unknown').upper()}[/cyan]")
+        console.print(f"  Database Size: [cyan]{stats.get('database_size_mb', 0):.2f} MB[/cyan]")
+        if stats.get('wal_size_mb', 0) > 0:
+            console.print(f"  WAL Size: [cyan]{stats.get('wal_size_mb', 0):.2f} MB[/cyan]")
+        console.print()
+        
+        # Memory Section
+        console.print("[bold]📦 Memory[/bold]")
+        console.print(f"  Total Memories: [cyan]{stats['total_memories']}[/cyan]")
+        console.print(f"  Total Facts: [cyan]{stats['total_active_facts']}[/cyan]")
+        total_embedded = stats.get('embedded_memories', 0) + stats.get('embedded_facts', 0)
+        total_items = stats['total_memories'] + stats['total_active_facts']
+        embed_pct = (total_embedded / total_items * 100) if total_items > 0 else 0
+        console.print(f"  Embedded: [cyan]{total_embedded} / {total_items}[/cyan] ([green]{embed_pct:.1f}%[/green])")
+        
+        if "runtime" in diag:
+            runtime = diag["runtime"]
+            console.print(f"  Index Size: [cyan]{runtime.get('index_entries', 0)} entries[/cyan]")
+        console.print()
+        
+        # Memory Health
+        console.print("[bold]🌡  Memory Health[/bold]")
         console.print(f"  🔥 Hot:  [bold red]{states['hot']}[/bold red]")
         console.print(f"  🌤  Warm: [bold yellow]{states['warm']}[/bold yellow]")
         console.print(f"  ❄  Cold: [bold blue]{states['cold']}[/bold blue]")
+        console.print()
 
-        if "runtime" in data:
-            cache = data["runtime"].get("cache", {})
-            console.print(f"\n[bold]⚡ Cache Performance[/bold]")
+        # Performance Section
+        if "runtime" in diag:
+            cache = diag["runtime"].get("cache", {})
+            console.print("[bold]⚡ Cache Performance[/bold]")
             for layer, s in cache.items():
                 console.print(f"  [dim]•[/dim] {layer.capitalize():<11}: Hit Rate: [green]{s['hit_rate']}[/green] ({s['size']}/{s['max_size']})")
+            console.print()
+        
+        # Background Jobs Section
+        if "runtime" in diag:
+            active_jobs = diag["runtime"].get("active_jobs", 0)
+            console.print("[bold]🔧 Background Jobs[/bold]")
+            console.print(f"  Active: [cyan]{active_jobs}[/cyan]")
+            console.print()
+        
+        # Health Status
+        health = "✓ HEALTHY"
+        health_color = "green"
+        
+        # Check for issues
+        if embed_pct < 90:
+            health = "⚠ DEGRADED (Low embedding coverage)"
+            health_color = "yellow"
+        if stats.get('wal_size_mb', 0) > 100:
+            health = "⚠ WARNING (Large WAL file)"
+            health_color = "yellow"
+        
+        console.print(f"[bold]Health:[/bold] [{health_color}]{health}[/{health_color}]")
+        
+    except Exception as e:
+        console.print(f"[bold red]Doctor failed:[/bold red] {e}")
+        import traceback
+        traceback.print_exc()
     except Exception as e:
         console.print(f"[bold red]Doctor failed:[/bold red] {e}")
 
 @app.command()
-def jobs(watch: bool = False):
+def jobs(
+    watch: bool = False,
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")
+):
     """List or watch background job status."""
+    workspace_id = workspace or get_workspace_id()
     try:
         if not is_running():
             console.print("[yellow]Daemon not running. Direct service jobs not trackable yet.[/yellow]")
             return
 
         while True:
-            resp = requests.get(f"{URL}/jobs").json()
+            resp = requests.get(f"{URL}/jobs", params={"workspace_id": workspace_id}).json()
             table = Table(title="Background Jobs")
             table.add_column("ID", style="cyan")
             table.add_column("Type", style="magenta")
@@ -225,6 +331,211 @@ def synthesize_all():
         console.print(f"[green]Completed![/green] Synthesized {len(files)} topic(s).")
     except Exception as e:
         console.print(f"[bold red]Global synthesis failed:[/bold red] {e}")
+
+# --- Ingestion Commands ---
+
+@app.command("ingest")
+def ingest_git(
+    limit: int = typer.Option(50, "--limit", "-n", help="Number of recent commits to ingest."),
+    since: Optional[str] = typer.Option(None, "--since", help="Only commits after this date (e.g., '2024-01-01')."),
+    branch: str = typer.Option("HEAD", "--branch", "-b", help="Git branch to ingest from."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without adding to memory."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")
+):
+    """Ingest knowledge from Git commit history (metadata-first)."""
+    workspace_id = workspace or get_workspace_id()
+    
+    try:
+        from memk.ingestion.git_ingestor import GitIngestor
+        from memk.workspace.manager import WorkspaceManager
+        
+        # Get repo path from workspace
+        ws = WorkspaceManager()
+        repo_path = ws.root
+        
+        console.print(f"[bold blue]📚 Ingesting Git History[/bold blue]")
+        console.print(f"  Repository: [cyan]{repo_path}[/cyan]")
+        console.print(f"  Branch: [cyan]{branch}[/cyan]")
+        console.print(f"  Limit: [cyan]{limit}[/cyan] commits")
+        if since:
+            console.print(f"  Since: [cyan]{since}[/cyan]")
+        
+        # Create ingestor
+        ingestor = GitIngestor(repo_path=str(repo_path))
+        
+        # Ingest commits
+        with console.status("[bold green]Processing commits..."):
+            memories = ingestor.ingest_commits(limit=limit, since=since, branch=branch)
+        
+        if not memories:
+            console.print("[yellow]No commits matched ingestion rules.[/yellow]")
+            return
+        
+        # Display summary
+        console.print(f"\n[green]✓ Found {len(memories)} memory candidates[/green]")
+        
+        # Show preview
+        if dry_run or len(memories) <= 10:
+            table = Table(title="Memory Candidates")
+            table.add_column("Category", style="magenta")
+            table.add_column("Content", style="cyan")
+            table.add_column("Importance", justify="right")
+            
+            for mem in memories[:10]:
+                table.add_row(
+                    mem["metadata"]["category"],
+                    mem["content"][:60] + "..." if len(mem["content"]) > 60 else mem["content"],
+                    f"{mem['importance']:.1f}"
+                )
+            
+            console.print(table)
+            
+            if len(memories) > 10:
+                console.print(f"[dim]... and {len(memories) - 10} more[/dim]")
+        
+        if dry_run:
+            console.print("\n[yellow]Dry run - no memories added.[/yellow]")
+            return
+        
+        # Add to memory
+        console.print(f"\n[bold]Adding {len(memories)} memories to brain...[/bold]")
+        
+        service = get_service()
+        import asyncio
+        
+        added_count = 0
+        for mem in memories:
+            try:
+                asyncio.run(service.add_memory(
+                    mem["content"],
+                    importance=mem["importance"],
+                    workspace_id=workspace_id
+                ))
+                added_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to add memory: {e}")
+        
+        console.print(f"[green]✓ Successfully added {added_count}/{len(memories)} memories![/green]")
+        
+        # Show categories breakdown
+        categories = {}
+        for mem in memories:
+            cat = mem["metadata"]["category"]
+            categories[cat] = categories.get(cat, 0) + 1
+        
+        console.print("\n[bold]Categories:[/bold]")
+        for cat, count in sorted(categories.items(), key=lambda x: x[1], reverse=True):
+            console.print(f"  • {cat}: [cyan]{count}[/cyan]")
+        
+    except Exception as e:
+        console.print(f"[bold red]Ingestion failed:[/bold red] {e}")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        raise typer.Exit(code=1)
+
+# --- Watcher Commands ---
+
+watch_app = typer.Typer(help="File watcher commands for real-time change detection")
+app.add_typer(watch_app, name="watch")
+
+@watch_app.command("start")
+def watch_start(
+    foreground: bool = typer.Option(False, "--foreground", "-f", help="Run in foreground (blocking).")
+):
+    """Start the file watcher for the current workspace."""
+    try:
+        from memk.workspace.manager import WorkspaceManager
+        from memk.watcher.file_watcher import WatcherService
+        
+        ws = WorkspaceManager()
+        if not ws.is_initialized():
+            console.print("[red]Workspace not initialized. Run 'memk init' first.[/red]")
+            raise typer.Exit(code=1)
+        
+        console.print(f"[bold blue]👁  Starting File Watcher[/bold blue]")
+        console.print(f"  Workspace: [cyan]{ws.root}[/cyan]")
+        
+        watcher_service = WatcherService(str(ws.root), ws)
+        watcher_service.start()
+        
+        console.print("[green]✓ File watcher started successfully![/green]")
+        console.print("[dim]Monitoring workspace for changes...[/dim]")
+        
+        if foreground:
+            console.print("\n[yellow]Press Ctrl+C to stop[/yellow]\n")
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Stopping watcher...[/yellow]")
+                watcher_service.stop()
+                console.print("[green]Watcher stopped.[/green]")
+        else:
+            console.print("[yellow]Note: Watcher is running in this process. Use daemon mode for persistent watching.[/yellow]")
+            console.print("[dim]Tip: Run 'memk serve' to start daemon with integrated watcher.[/dim]")
+            
+    except Exception as e:
+        console.print(f"[bold red]Failed to start watcher:[/bold red] {e}")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        raise typer.Exit(code=1)
+
+@watch_app.command("stop")
+def watch_stop():
+    """Stop the file watcher (daemon mode only)."""
+    try:
+        if not is_running():
+            console.print("[yellow]Daemon not running. No watcher to stop.[/yellow]")
+            return
+        
+        # Send stop command to daemon
+        resp = requests.post(f"{URL}/watcher/stop").json()
+        
+        if resp.get("success"):
+            console.print("[green]✓ File watcher stopped.[/green]")
+        else:
+            console.print(f"[yellow]Watcher stop failed: {resp.get('message')}[/yellow]")
+            
+    except Exception as e:
+        console.print(f"[bold red]Failed to stop watcher:[/bold red] {e}")
+
+@watch_app.command("status")
+def watch_status():
+    """Show file watcher status and statistics."""
+    try:
+        if is_running():
+            # Get status from daemon
+            resp = requests.get(f"{URL}/watcher/status").json()
+            status = resp.get("status", {})
+        else:
+            console.print("[yellow]Daemon not running. Checking local workspace...[/yellow]")
+            status = {"running": False}
+        
+        console.print("[bold blue]👁  File Watcher Status[/bold blue]")
+        
+        running = status.get("running", False)
+        color = "green" if running else "red"
+        console.print(f"  Status: [{color}]{'RUNNING' if running else 'STOPPED'}[/{color}]")
+        
+        if running:
+            console.print(f"  Workspace: [cyan]{status.get('workspace_root', 'N/A')}[/cyan]")
+            console.print(f"  Uptime: [cyan]{status.get('uptime_seconds', 0):.0f}s[/cyan]")
+            console.print(f"\n[bold]Statistics:[/bold]")
+            console.print(f"  Total Events: [cyan]{status.get('total_events', 0)}[/cyan]")
+            console.print(f"  Filtered: [dim]{status.get('filtered_events', 0)}[/dim]")
+            console.print(f"  Batched: [cyan]{status.get('batched_events', 0)}[/cyan]")
+            console.print(f"  Generation Bumps: [yellow]{status.get('generation_bumps', 0)}[/yellow]")
+            console.print(f"  Pending: [dim]{status.get('pending_events', 0)}[/dim]")
+            
+            # Show recent changes
+            recent = status.get("recent_changes", [])
+            if recent:
+                console.print(f"\n[bold]Recent Changes:[/bold]")
+                for change in recent[-5:]:
+                    console.print(f"  [dim]{change['timestamp']}[/dim] → Gen {change['generation']} ({change['event_count']} files)")
+        
+    except Exception as e:
+        console.print(f"[bold red]Failed to get watcher status:[/bold red] {e}")
 
 if __name__ == "__main__":
     app()

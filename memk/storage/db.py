@@ -9,17 +9,13 @@ memories   : raw immutable chat / event log
 facts      : reconciled Subject-Predicate-Object knowledge graph
 decisions  : agent decision audit trail
 
-v0.3 additions (metadata / scoring support)
---------------------------------------------
-Both memories and facts now carry:
-  importance       REAL [0,1]   — domain priority set at insert time
-  confidence       REAL [0,1]   — epistemic certainty
-  access_count     INTEGER      — incremented on each retrieval
-  last_accessed_at TEXT         — ISO UTC timestamp of last retrieval
-
-Migration is fully backward-compatible: the init_db() method applies
-ALTER TABLE statements guarded by OperationalError so the same code
-runs on any database version without wiping data.
+v0.4 production hardening
+--------------------------
+- Schema versioning with migration framework
+- WAL mode for concurrent access
+- Performance indexes
+- Background job tracking
+- Database metadata
 """
 
 import sqlite3
@@ -29,6 +25,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+
+from memk.storage.migrations import auto_migrate, check_schema_version
+from memk.storage.config import configure_connection, get_database_info
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +54,14 @@ class MemoryDB:
     # ------------------------------------------------------------------
 
     def _get_connection(self) -> sqlite3.Connection:
-        """Return a configured SQLite connection (row_factory = Row)."""
+        """Return a configured SQLite connection with WAL mode and optimizations."""
         try:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
+            
+            # Apply production configuration (WAL mode, pragmas)
+            configure_connection(conn)
+            
             return conn
         except sqlite3.Error as e:
             logger.error(f"DB connect failed [{self.db_path}]: {e}")
@@ -72,7 +75,19 @@ class MemoryDB:
         """
         Create tables and apply all pending migrations.
         Safe to call multiple times — fully idempotent.
+        
+        Uses migration framework for schema versioning.
         """
+        # Run auto-migration first (handles schema versioning)
+        try:
+            migrated = auto_migrate(self.db_path)
+            if migrated:
+                logger.info(f"Database migrations applied: {self.db_path}")
+        except Exception as e:
+            logger.error(f"Migration failed: {e}")
+            raise DatabaseError(f"Migration failed: {e}") from e
+        
+        # Create core tables (idempotent - IF NOT EXISTS)
         create_memories = """
             CREATE TABLE IF NOT EXISTS memories (
                 id               TEXT    PRIMARY KEY,
@@ -112,36 +127,16 @@ class MemoryDB:
             )
         """
 
-        # Migration map: (table, column, definition)
-        migrations = [
-            # v0.1 → v0.2 embeddings
-            ("facts",    "is_active",        "INTEGER DEFAULT 1"),
-            ("memories", "embedding",         "BLOB"),
-            ("facts",    "embedding",         "BLOB"),
-            # v0.2 → v0.3 scoring metadata
-            ("memories", "importance",        "REAL DEFAULT 0.5"),
-            ("memories", "confidence",        "REAL DEFAULT 1.0"),
-            ("memories", "access_count",      "INTEGER DEFAULT 0"),
-            ("memories", "last_accessed_at",  "TEXT"),
-            ("facts",    "access_count",      "INTEGER DEFAULT 0"),
-            ("facts",    "last_accessed_at",  "TEXT"),
-            ("memories", "decay_score",       "REAL DEFAULT 1.0"),
-            ("facts",    "decay_score",       "REAL DEFAULT 1.0"),
-            # facts.importance was INTEGER in v0.1 — it stays as-is; new rows use REAL
-        ]
-
         try:
             with self._get_connection() as conn:
                 conn.execute(create_memories)
                 conn.execute(create_facts)
                 conn.execute(create_decisions)
-                for table, col, defn in migrations:
-                    try:
-                        conn.execute(
-                            f"ALTER TABLE {table} ADD COLUMN {col} {defn}"
-                        )
-                    except sqlite3.OperationalError:
-                        pass  # Column already exists — expected on re-init
+                
+                # Log database info
+                info = get_database_info(conn)
+                logger.info(f"Database initialized: {info.get('journal_mode')} mode, "
+                           f"{info.get('size_mb', 0)}MB")
         except sqlite3.Error as e:
             logger.error(f"Schema init failed: {e}")
             raise DatabaseError(f"Initialization failed: {e}") from e
@@ -551,11 +546,23 @@ class MemoryDB:
     # ------------------------------------------------------------------
 
     def get_stats(self) -> Dict[str, Any]:
-        """Aggregate statistics for `memk doctor`."""
+        """Aggregate statistics for `memk doctor` with production metrics."""
         try:
             with self._get_connection() as conn:
                 def scalar(q: str) -> int:
                     return conn.execute(q).fetchone()[0]
+
+                # Get schema version
+                schema_version = 0
+                try:
+                    schema_version = conn.execute(
+                        "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
+                    ).fetchone()[0]
+                except:
+                    pass
+                
+                # Get database info
+                db_info = get_database_info(conn)
 
                 return {
                     "total_memories":       scalar("SELECT COUNT(*) FROM memories"),
@@ -567,6 +574,10 @@ class MemoryDB:
                     "total_decisions":      scalar("SELECT COUNT(*) FROM decisions"),
                     "most_accessed_memory": _most_accessed(conn, "memories"),
                     "most_accessed_fact":   _most_accessed(conn, "facts"),
+                    "schema_version":       schema_version,
+                    "database_size_mb":     db_info.get("size_mb", 0),
+                    "journal_mode":         db_info.get("journal_mode", "unknown"),
+                    "wal_size_mb":          db_info.get("wal_size_mb", 0) if db_info.get("journal_mode") == "wal" else 0,
                 }
         except sqlite3.Error as e:
             raise DatabaseError(f"get_stats failed: {e}") from e

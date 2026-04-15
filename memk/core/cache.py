@@ -58,7 +58,7 @@ class LRUCache:
         }
 
 class MemoryCacheManager:
-    """Orchestrates multi-layer caching for MemoryKernel."""
+    """Orchestrates multi-layer caching for MemoryKernel with generation-based invalidation."""
     def __init__(self):
         # Layer 1: Raw string -> Embedding vector
         self.embeddings = LRUCache(maxsize=500, ttl_seconds=86400) # 24h
@@ -68,16 +68,39 @@ class MemoryCacheManager:
         
         # Layer 3: Context params -> Final string
         self.contexts = LRUCache(maxsize=100, ttl_seconds=300) # 5m
+        
+        # Track the generation this cache was built for
+        self._cache_generation: Optional[int] = None
+        self._lock = threading.Lock()
+
+    def set_generation(self, generation: int):
+        """
+        Update the cache generation marker.
+        If generation has changed, invalidate structural caches.
+        """
+        with self._lock:
+            if self._cache_generation is not None and self._cache_generation != generation:
+                logger.info(f"Generation changed ({self._cache_generation} -> {generation}). Invalidating caches.")
+                self.search_results.clear()
+                self.contexts.clear()
+            self._cache_generation = generation
+
+    def get_generation(self) -> Optional[int]:
+        """Return the generation this cache is currently valid for."""
+        with self._lock:
+            return self._cache_generation
 
     def invalidate_structural(self):
         """Called when data changes (write/delete). Invalidate layers 2 & 3."""
         logger.info("New write detected. Invalidating search and context caches.")
-        self.search_results.clear()
-        self.contexts.clear()
+        with self._lock:
+            self.search_results.clear()
+            self.contexts.clear()
 
     def get_stats(self) -> Dict[str, Any]:
         return {
             "embeddings": self.embeddings.stats,
             "search": self.search_results.stats,
-            "contexts": self.contexts.stats
+            "contexts": self.contexts.stats,
+            "cache_generation": self._cache_generation,
         }

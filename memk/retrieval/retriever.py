@@ -410,6 +410,47 @@ class ScoredRetriever:
 
         return top
 
+    def rank_candidates(self, query: str, q_vec: np.ndarray, index_hits: List[Tuple], limit: int) -> List[RetrievedItem]:
+        """
+        Pure ranking logic separated from retrieval.
+        Used by the service layer for deadline-aware pipelines.
+        """
+        # Keyword hit sets (O(1) lookup during scoring loop)
+        keyword_fact_ids = {r["id"] for r in self.db.search_facts(keyword=query)}
+        keyword_mem_ids  = {r["id"] for r in self.db.search_memory(keyword=query)}
+
+        results: List[RetrievedItem] = []
+        for entry, sim in index_hits:
+            breakdown = self.scorer.score(
+                vector_similarity=sim,
+                keyword_score=1.0 if entry.id in keyword_fact_ids or entry.id in keyword_mem_ids else 0.0,
+                importance=entry.importance,
+                created_at=entry.created_at,
+                confidence=entry.confidence,
+                is_fact=(entry.item_type == "fact"),
+            )
+            if breakdown.final_score >= self.score_threshold:
+                results.append(RetrievedItem(
+                    item_type=entry.item_type,
+                    id=entry.id,
+                    content=entry.content,
+                    created_at=entry.created_at,
+                    score=breakdown.final_score,
+                    importance=entry.importance,
+                    confidence=entry.confidence,
+                    access_count=entry.access_count,
+                    decay_score=entry.decay_score,
+                    breakdown=breakdown,
+                ))
+
+        results.sort(key=lambda x: (x.score, x.created_at), reverse=True)
+        top = results[:limit]
+
+        if self.track_access:
+            self._track(top)
+        
+        return top
+
     def backfill_all_embeddings(self) -> int:
         """Explicitly embed all rows lacking a vector. Returns count updated."""
         return self._backfill_embeddings(self._get_embedder())

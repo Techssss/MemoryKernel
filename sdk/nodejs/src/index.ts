@@ -1,0 +1,18 @@
+/**
+ * @memk/sdk
+ * =========
+ * MemoryKernel SDK for Node.js
+ * 
+ * Simple, type-safe client for integrating local project memory.
+ */
+
+export { MemoryKernel } from './client';
+export type {
+  MemoryItem,
+  WorkspaceStatus,
+  RememberOptions,
+  SearchOptions,
+  ContextOptions,
+  IngestGitOptions,
+  IngestGitResult
+} from './types';
