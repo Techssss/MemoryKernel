@@ -25,6 +25,7 @@ from memk.extraction.extractor import RuleBasedExtractor
 from memk.retrieval.index import VectorIndex, IndexEntry
 from memk.core.cache import MemoryCacheManager
 from memk.core.jobs import BackgroundJobManager
+from memk.storage.graph_repository import GraphRepository
 
 logger = logging.getLogger("memk.runtime")
 
@@ -57,7 +58,10 @@ class WorkspaceRuntime:
             index=self.index, cache=self.cache,
         )
         self.builder = ContextBuilder()
-        self.extractor = RuleBasedExtractor()
+        self.extractor = self._create_extractor()
+        
+        # Graph sidecar — safe init (None if tables don't exist)
+        self.graph_repo = self._create_graph_repo()
         
         self.telemetry = TelemetryData()
         self.last_active = time.time()
@@ -68,6 +72,37 @@ class WorkspaceRuntime:
             self.cache.set_generation(current_gen)
         
         self._hydrate_index()
+
+    @staticmethod
+    def _create_extractor():
+        """Create best available extractor: SpaCyExtractor > RuleBasedExtractor."""
+        try:
+            from memk.extraction.spacy_extractor import SpaCyExtractor
+            ext = SpaCyExtractor()
+            # Probe model availability without full load
+            if ext._ensure_model():
+                logger.info("Using SpaCyExtractor for fact extraction")
+                return ext
+        except ImportError:
+            pass
+        logger.info("Falling back to RuleBasedExtractor")
+        return RuleBasedExtractor()
+
+    def _create_graph_repo(self):
+        """Create GraphRepository if V5 schema tables exist, otherwise None."""
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.db_path)
+            tables = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            conn.close()
+            if "entity" in tables and "edge" in tables and "mention" in tables:
+                logger.info(f"[{self.workspace_id}] Graph repository initialized")
+                return GraphRepository(self.db_path)
+        except Exception as e:
+            logger.debug(f"[{self.workspace_id}] Graph repo init skipped: {e}")
+        return None
 
     def get_generation(self) -> int:
         """Get current generation from workspace manifest."""

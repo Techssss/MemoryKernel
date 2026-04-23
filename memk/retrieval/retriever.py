@@ -410,16 +410,18 @@ class ScoredRetriever:
 
         return top
 
-    def rank_candidates(self, query: str, q_vec: np.ndarray, index_hits: List[Tuple], limit: int) -> List[RetrievedItem]:
+    def rank_candidates(self, query: str, q_vec: np.ndarray, index_hits: List[Tuple], limit: int, graph_index=None) -> List[RetrievedItem]:
         """
         Pure ranking logic separated from retrieval.
         Used by the service layer for deadline-aware pipelines.
+        Includes graph propagation if graph_index is provided.
         """
         # Keyword hit sets (O(1) lookup during scoring loop)
         keyword_fact_ids = {r["id"] for r in self.db.search_facts(keyword=query)}
         keyword_mem_ids  = {r["id"] for r in self.db.search_memory(keyword=query)}
 
-        results: List[RetrievedItem] = []
+        # Phase 1: Base scoring
+        base_scores = []
         for entry, sim in index_hits:
             breakdown = self.scorer.score(
                 vector_similarity=sim,
@@ -429,18 +431,75 @@ class ScoredRetriever:
                 confidence=entry.confidence,
                 is_fact=(entry.item_type == "fact"),
             )
-            if breakdown.final_score >= self.score_threshold:
+            base_scores.append((entry, breakdown))
+
+        # Phase 2: Graph Propagation (extract seeds -> spread -> gather bonus)
+        graph_bonus = {}
+        if graph_index is not None and graph_index.num_entities > 0:
+            from memk.core.graph_propagation import propagate_ppnp
+            
+            # Sort base hits to get valid seeds
+            base_scores.sort(key=lambda x: x[1].final_score, reverse=True)
+            top_seeds = base_scores[:limit]
+            
+            seed_scores = {}
+            for entry, bd in top_seeds:
+                if bd.final_score <= 0: continue
+                # We map memory_ids -> entities
+                m_int = graph_index.memory_id_map.get(entry.id)
+                if m_int is not None:
+                    start, end = graph_index.m2e_indptr[m_int], graph_index.m2e_indptr[m_int+1]
+                    for e_int in graph_index.m2e_indices[start:end]:
+                        seed_scores[e_int] = max(seed_scores.get(e_int, 0.0), bd.final_score)
+            
+            if seed_scores:
+                activated_entities = propagate_ppnp(
+                    seed_scores=seed_scores,
+                    indptr=graph_index.e2e_indptr,
+                    indices=graph_index.e2e_indices,
+                    weights=graph_index.e2e_weights,
+                    num_entities=graph_index.num_entities,
+                    alpha=0.3,
+                    steps=3,
+                    max_active_entities=50
+                )
+                
+                # Project network activation back to memory IDs
+                for e_int, act_score in activated_entities.items():
+                    start, end = graph_index.e2m_indptr[e_int], graph_index.e2m_indptr[e_int+1]
+                    for m_int in graph_index.e2m_indices[start:end]:
+                        mem_id = graph_index.memory_ids[m_int]
+                        graph_bonus[mem_id] = max(graph_bonus.get(mem_id, 0.0), act_score)
+
+        # Phase 3: Final Assembly and Rescoring
+        results: List[RetrievedItem] = []
+        for entry, base_bd in base_scores:
+            g_score = graph_bonus.get(entry.id, 0.0)
+            if g_score > 0.0:
+                final_bd = self.scorer.score(
+                    vector_similarity=base_bd.vector_similarity,
+                    keyword_score=base_bd.keyword_score,
+                    importance=base_bd.importance,
+                    created_at=entry.created_at,
+                    confidence=base_bd.confidence,
+                    graph_score=g_score,
+                    is_fact=(entry.item_type == "fact"),
+                )
+            else:
+                final_bd = base_bd
+                
+            if final_bd.final_score >= self.score_threshold:
                 results.append(RetrievedItem(
                     item_type=entry.item_type,
                     id=entry.id,
                     content=entry.content,
                     created_at=entry.created_at,
-                    score=breakdown.final_score,
+                    score=final_bd.final_score,
                     importance=entry.importance,
                     confidence=entry.confidence,
                     access_count=entry.access_count,
                     decay_score=entry.decay_score,
-                    breakdown=breakdown,
+                    breakdown=final_bd,
                 ))
 
         results.sort(key=lambda x: (x.score, x.created_at), reverse=True)

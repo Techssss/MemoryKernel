@@ -131,7 +131,38 @@ class MemoryKernelService:
                             )
                             extracted.append({"id": f_id, "triplet": t_str})
 
-            # 4. Bump generation and invalidate cache
+            # 5. Graph enrichment — entities, mentions, edges
+            #    Gated by: graph_repo existence + feature flag
+            #    Never fails the write — errors are logged and swallowed
+            _graph_enabled = os.getenv("MEMK_GRAPH_EXTRACTION", "1") == "1"
+            if facts and _graph_enabled and runtime.graph_repo is not None:
+                if tc.elapsed_ms() < self.deadline_ms:
+                    with tc.span("graph_extraction", fact_count=len(facts)):
+                        try:
+                            self._enrich_graph(
+                                runtime, workspace_id, mem_id, facts,
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"[{workspace_id}] Graph enrichment failed "
+                                f"(non-fatal): {e}"
+                            )
+
+            # 6. Async Pipeline (Enhanced Extraction)
+            # Enqueue high-priority items or those that failed simple spacy extraction
+            # into the background worker queue so we don't stall the hot write path.
+            if importance >= 0.7 or confidence >= 0.8 or not facts:
+                from memk.extraction.async_pipeline import enhanced_extraction_job
+                runtime.jobs.submit(
+                    job_type="enhanced_extraction",
+                    func=enhanced_extraction_job,
+                    runtime=runtime,
+                    workspace_id=workspace_id, 
+                    memory_id=mem_id, 
+                    text=content
+                )
+
+            # 7. Bump generation and invalidate cache
             with tc.span("generation_bump"):
                 new_generation = runtime.bump_generation()
 
@@ -149,6 +180,62 @@ class MemoryKernelService:
             "extracted_facts": extracted,
             "metadata": metadata.dict(),
         }
+
+    # ------------------------------------------------------------------
+    # Graph enrichment helper (called from add_memory write path)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _enrich_graph(
+        runtime: WorkspaceRuntime,
+        workspace_id: str,
+        memory_id: str,
+        facts: list,
+    ) -> int:
+        """
+        Convert extracted triplets into graph entities + edges.
+
+        For each StructuredFact (subject, relation, object):
+        1. Upsert subject entity
+        2. Upsert object entity
+        3. Create mention links (memory → subject, memory → object)
+        4. Create edge (subject → object) with relation as rel_type
+
+        Returns the number of edges created.
+        """
+        repo = runtime.graph_repo
+        edges_created = 0
+
+        for fact in facts:
+            # Upsert entities (idempotent — returns existing id if duplicate)
+            subj_id = repo.upsert_entity(
+                workspace_id, fact.subject, confidence=0.5,
+            )
+            obj_id = repo.upsert_entity(
+                workspace_id, fact.object, confidence=0.5,
+            )
+
+            # Link memory → entities
+            repo.add_mention(memory_id, subj_id, role_hint="subject")
+            repo.add_mention(memory_id, obj_id, role_hint="object")
+
+            # Create edge
+            repo.add_edge(
+                workspace_id,
+                subj_id,
+                fact.relation,
+                obj_id,
+                provenance_memory_id=memory_id,
+                confidence=0.5,
+            )
+            edges_created += 1
+
+        if edges_created:
+            logger.debug(
+                f"[{workspace_id}] Graph enriched: "
+                f"{edges_created} edges from memory {memory_id[:8]}.."
+            )
+        return edges_created
 
     # ------------------------------------------------------------------
     # search — read path
@@ -320,12 +407,29 @@ class MemoryKernelService:
         from memk.core.forgetting import ForgettingEngine
         engine = ForgettingEngine()
         states = runtime.db.get_state_counts(engine.cold_threshold, engine.warm_threshold)
+        
+        # Include sync stats summary
+        sync_stats = self.get_sync_stats(workspace_id)
+        
         return {
             "db_stats": stats,
             "memory_health": states,
+            "sync_health": {
+                "oplog_count": sync_stats.get("oplog", {}).get("count", 0),
+                "replica_lag": sync_stats.get("replicas", {}).get("slowest_lag_seconds", 0),
+                "integrity_issues": (sync_stats.get("integrity", {}).get("stale_row_hash_count", 0) + 
+                                   sync_stats.get("integrity", {}).get("stale_merkle_bucket_count", 0))
+            },
             "runtime": runtime.get_diagnostics(),
             "global": self.global_runtime.get_diagnostics()["global"]
         }
+
+    def get_sync_stats(self, workspace_id: str = "default") -> Dict[str, Any]:
+        """Gather hardening stats for Delta Sync and Merkle consistency."""
+        from memk.sync.stats import SyncStatsService
+        runtime = self._get_runtime(workspace_id)
+        stats_service = SyncStatsService(runtime)
+        return stats_service.get_sync_hardening_stats()
 
     def get_tail_latency_report(self) -> Dict[str, Any]:
         return self.collector.get_report()
@@ -370,6 +474,7 @@ class MemoryKernelService:
                 return results
 
             with tc.span("rank", candidates=len(index_hits)):
-                return runtime.retriever.rank_candidates(query, q_vec, index_hits, limit)
+                graph_idx = getattr(runtime, "graph_index", None)
+                return runtime.retriever.rank_candidates(query, q_vec, index_hits, limit, graph_index=graph_idx)
         
         return []

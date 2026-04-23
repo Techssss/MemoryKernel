@@ -47,6 +47,10 @@ test_output*.txt
 # Temporary files
 tmp/
 tmp_*/
+bench_tmp*/
+stress_test_output*.txt
+*report.md
+*roadmap.md
 Demo/
 Documents/
 

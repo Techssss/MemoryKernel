@@ -15,7 +15,7 @@ from dataclasses import dataclass
 logger = logging.getLogger("memk.migrations")
 
 # Current schema version
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 12
 
 @dataclass
 class Migration:
@@ -160,6 +160,224 @@ def migrate_v3_to_v4(conn: sqlite3.Connection):
         VALUES ('created_at', ?, ?)
     """, (now, now))
 
+def migrate_v4_to_v5(conn: sqlite3.Connection):
+    """Add knowledge graph sidecar tables (entity, mention, edge, kg_fact).
+
+    These tables form a lightweight graph layer alongside the existing
+    flat memories/facts storage. They enable multi-hop reasoning without
+    replacing the current retrieval pipeline.
+
+    Tables
+    ------
+    entity   : Canonical entity store. One row per unique real-world entity
+               within a workspace. `normalized_text` is lowercase/stripped
+               for fast dedup lookups.
+    mention  : Links a memory row to the entities it references, with
+               optional character-span and role metadata. Composite PK,
+               WITHOUT ROWID for compact storage.
+    edge     : Directional relationship between two entities, extracted
+               from a specific memory (provenance_memory_id). Supports
+               archiving without deletion.
+    kg_fact  : Consolidated knowledge — summaries produced by the future
+               consolidation pipeline. Separate from the existing `facts`
+               table to avoid coupling.
+    """
+    # -- entity --------------------------------------------------------
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS entity (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id    TEXT    NOT NULL,
+            canonical_text  TEXT    NOT NULL,
+            normalized_text TEXT    NOT NULL,
+            entity_type     TEXT,
+            first_seen_ts   TEXT    NOT NULL,
+            last_seen_ts    TEXT    NOT NULL,
+            confidence      REAL    NOT NULL DEFAULT 0.5
+        )
+    """)
+    # Fast dedup: (workspace, normalized_text, type) must be unique
+    conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_norm
+        ON entity(workspace_id, normalized_text, entity_type)
+    """)
+
+    # -- mention -------------------------------------------------------
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS mention (
+            memory_id       TEXT    NOT NULL,
+            entity_id       INTEGER NOT NULL,
+            start_char      INTEGER,
+            end_char         INTEGER,
+            role_hint       TEXT,
+            weight          REAL    NOT NULL DEFAULT 1.0,
+            PRIMARY KEY (memory_id, entity_id, role_hint)
+        ) WITHOUT ROWID
+    """)
+
+    # -- edge ----------------------------------------------------------
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS edge (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id         TEXT    NOT NULL,
+            src_entity_id        INTEGER NOT NULL,
+            rel_type             TEXT    NOT NULL,
+            dst_entity_id        INTEGER NOT NULL,
+            weight               REAL    NOT NULL DEFAULT 1.0,
+            confidence           REAL    NOT NULL DEFAULT 0.5,
+            provenance_memory_id TEXT    NOT NULL,
+            archived             INTEGER NOT NULL DEFAULT 0,
+            created_at           TEXT    NOT NULL
+        )
+    """)
+    # Traversal from a source entity
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_edge_src
+        ON edge(workspace_id, src_entity_id)
+    """)
+    # Reverse traversal (inbound edges)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_edge_dst
+        ON edge(workspace_id, dst_entity_id)
+    """)
+    # Lookup edges originating from a specific memory
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_edge_provenance
+        ON edge(provenance_memory_id)
+    """)
+
+    # -- kg_fact (consolidated knowledge) ------------------------------
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS kg_fact (
+            id              TEXT    PRIMARY KEY,
+            workspace_id    TEXT    NOT NULL,
+            canonical_text  TEXT    NOT NULL,
+            summary_json    TEXT,
+            confidence      REAL    NOT NULL DEFAULT 0.5,
+            created_ts      TEXT    NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_kg_fact_ws
+        ON kg_fact(workspace_id, created_ts DESC)
+    """)
+
+
+def migrate_v5_to_v6(conn: sqlite3.Connection):
+    """Add partitioning and sharding fields to memories."""
+    try:
+        conn.execute("ALTER TABLE memories ADD COLUMN centroid_id TEXT")
+    except sqlite3.OperationalError:
+        pass
+        
+    try:
+        conn.execute("ALTER TABLE memories ADD COLUMN heat_tier INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_heat ON memories(heat_tier DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_centroid ON memories(centroid_id)")
+
+def migrate_v6_to_v7(conn: sqlite3.Connection):
+    """Add archived field to memories for consolidation."""
+    try:
+        conn.execute("ALTER TABLE memories ADD COLUMN archived INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_archived ON memories(archived)")
+
+def migrate_v7_to_v8(conn: sqlite3.Connection):
+    """Add multi-device sync version fields using HLC logic."""
+    for table in ["memories", "kg_fact"]:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN version_hlc INTEGER DEFAULT 0")
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN version_node TEXT")
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN version_seq INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+            
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_hlc ON memories(version_hlc DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_kg_fact_hlc ON kg_fact(version_hlc DESC)")
+
+def migrate_v8_to_v9(conn: sqlite3.Connection):
+    """Add delta sync infrastructure (oplog, row_hash, merkle_bucket)."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS oplog (
+            version_hlc INTEGER NOT NULL,
+            version_node TEXT NOT NULL,
+            version_seq INTEGER NOT NULL,
+            table_name TEXT NOT NULL,
+            row_id TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            PRIMARY KEY (version_hlc, version_node, version_seq)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS row_hash (
+            table_name TEXT NOT NULL,
+            row_id TEXT NOT NULL,
+            hash_val TEXT NOT NULL,
+            version_hlc INTEGER,
+            PRIMARY KEY (table_name, row_id)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS merkle_bucket (
+            bucket_id INTEGER PRIMARY KEY,
+            hash_val TEXT NOT NULL,
+            updated_hlc INTEGER NOT NULL
+        )
+    """)
+
+def migrate_v9_to_v10(conn: sqlite3.Connection):
+    """Add replica checkpointing for tracking replica state."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS replica_checkpoint (
+            replica_id TEXT PRIMARY KEY,
+            last_applied_hlc INTEGER NOT NULL,
+            last_applied_node TEXT NOT NULL,
+            last_applied_seq INTEGER NOT NULL,
+            updated_ts TEXT NOT NULL,
+            note TEXT
+        )
+    """)
+
+def migrate_v10_to_v11(conn: sqlite3.Connection):
+    """Add conflict_record table for semantic conflict tracking.
+
+    LWW (Last Writer Wins) silently overwrites data based on version_hlc.
+    This table captures cases where the overwritten data carried distinct
+    semantic meaning that a user or agent may want to review later.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS conflict_record (
+            conflict_id     TEXT    PRIMARY KEY,
+            table_name      TEXT    NOT NULL,
+            row_id          TEXT    NOT NULL,
+            local_hlc       INTEGER NOT NULL,
+            remote_hlc      INTEGER NOT NULL,
+            local_snapshot  TEXT    NOT NULL,
+            remote_snapshot TEXT    NOT NULL,
+            detected_ts     TEXT    NOT NULL,
+            status          TEXT    NOT NULL DEFAULT 'open',
+            resolution      TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_conflict_status
+        ON conflict_record(status, detected_ts DESC)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_conflict_row
+        ON conflict_record(table_name, row_id)
+    """)
+
+def migrate_v11_to_v12(conn: sqlite3.Connection):
+    """Add resolved_ts to conflict_record for resolution timestamp tracking."""
+    try:
+        conn.execute("ALTER TABLE conflict_record ADD COLUMN resolved_ts TEXT")
+    except sqlite3.OperationalError:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Migration Registry
@@ -170,6 +388,14 @@ MIGRATIONS: List[Migration] = [
     Migration(2, "Add core tables and performance indexes", migrate_v1_to_v2),
     Migration(3, "Add background job tracking", migrate_v2_to_v3),
     Migration(4, "Add database metadata", migrate_v3_to_v4),
+    Migration(5, "Add knowledge graph sidecar tables", migrate_v4_to_v5),
+    Migration(6, "Add centroid and heat tier to memories", migrate_v5_to_v6),
+    Migration(7, "Add archived field to memories", migrate_v6_to_v7),
+    Migration(8, "Add HLC sync fields to semantic tables", migrate_v7_to_v8),
+    Migration(9, "Add oplog and merkle tables for sync", migrate_v8_to_v9),
+    Migration(10, "Add replica checkpoint tracking", migrate_v9_to_v10),
+    Migration(11, "Add conflict record table", migrate_v10_to_v11),
+    Migration(12, "Add resolved_ts to conflict_record", migrate_v11_to_v12),
 ]
 
 

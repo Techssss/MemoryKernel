@@ -11,5 +11,12 @@ watchdog>=3.0.0
 gitpython>=3.1.0
 httpx>=0.24.0
 
+# Performance monitoring (optional)
+psutil>=5.9.0
+
 # Optional but recommended
 python-dotenv>=1.0.0
+
+# Graph extraction (optional — needed for SpaCyExtractor)
+# After installing, run: python -m spacy download en_core_web_sm
+spacy>=3.7.0

@@ -1,0 +1,21 @@
+name = "neural-memory-sync-hub"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 Database
+[[d1_databases]]
+binding = "SYNC_DB"
+database_name = "neural-memory-sync"
+database_id = "22d4d1da-d4b9-4a98-9392-9005da01baab"
+migrations_dir = "src/db/migrations"
+
+# R2 Bucket (for brain snapshots — Phase 1 placeholder)
+# [[r2_buckets]]
+# binding = "BRAIN_SNAPSHOTS"
+# bucket_name = "neural-memory-brains"
+
+# KV Namespace (for rate limiting — Phase 2)
+# [[kv_namespaces]]
+# binding = "RATE_LIMITS"
+# id = ""

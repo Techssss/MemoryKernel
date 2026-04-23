@@ -102,6 +102,8 @@ class WorkspaceRuntimeV2:
                 self.workspace_id,
                 "index"
             )
+            if not self._initialized:
+                self._initialize()
         return self._index
     
     @property
@@ -127,6 +129,8 @@ class WorkspaceRuntimeV2:
                 "retriever",
                 db_path=self._resolve_db_path()
             )
+            if not self._initialized:
+                self._initialize()
         return self._retriever
     
     @property
@@ -199,12 +203,14 @@ class WorkspaceRuntimeV2:
         if self._initialized:
             return
         
+        # Mark as initialized early to avoid recursion during hydration
+        self._initialized = True
+        
         start = time.perf_counter()
         
         # Hydrate index from storage (db already loaded at this point)
         self._hydrate_index()
         
-        self._initialized = True
         self.telemetry.startup_time_ms = (time.perf_counter() - start) * 1000
         logger.info(
             f"[{self.workspace_id}] Runtime initialized in "
@@ -212,13 +218,17 @@ class WorkspaceRuntimeV2:
         )
     
     def _hydrate_index(self):
-        """Load embeddings from storage into RAM index."""
+        """Load embeddings from storage into RAM index with bulk streaming optimization."""
         from memk.retrieval.index import IndexEntry
         from memk.core.embedder import decode_embedding
         
-        # Load facts
-        facts = self.db.get_all_active_facts()
-        for r in facts:
+        # Hydration buffer
+        entries_buf = []
+        vectors_buf = []
+        BATCH_SIZE = 5000
+        
+        # Load facts via stream
+        for r in self.db.stream_all_active_facts():
             if r["embedding"]:
                 entry = IndexEntry(
                     id=r["id"],
@@ -230,11 +240,15 @@ class WorkspaceRuntimeV2:
                     decay_score=float(r.get("decay_score", 1.0)),
                     access_count=int(r.get("access_count", 0)),
                 )
-                self.index.add_entry(entry, decode_embedding(r["embedding"]))
+                entries_buf.append(entry)
+                vectors_buf.append(decode_embedding(r["embedding"]))
+                
+                if len(entries_buf) >= BATCH_SIZE:
+                    self.index.bulk_add_entries(entries_buf, vectors_buf)
+                    entries_buf, vectors_buf = [], []
         
-        # Load memories
-        mems = self.db.get_all_memories()
-        for r in mems:
+        # Load memories via stream
+        for r in self.db.stream_all_memories():
             if r["embedding"]:
                 entry = IndexEntry(
                     id=r["id"],
@@ -246,7 +260,16 @@ class WorkspaceRuntimeV2:
                     decay_score=float(r.get("decay_score", 1.0)),
                     access_count=int(r.get("access_count", 0)),
                 )
-                self.index.add_entry(entry, decode_embedding(r["embedding"]))
+                entries_buf.append(entry)
+                vectors_buf.append(decode_embedding(r["embedding"]))
+                
+                if len(entries_buf) >= BATCH_SIZE:
+                    self.index.bulk_add_entries(entries_buf, vectors_buf)
+                    entries_buf, vectors_buf = [], []
+        
+        # Final flush
+        if entries_buf:
+            self.index.bulk_add_entries(entries_buf, vectors_buf)
         
         self.telemetry.index_size = len(self.index)
         logger.info(f"[{self.workspace_id}] Hydrated index: {self.telemetry.index_size} entries")

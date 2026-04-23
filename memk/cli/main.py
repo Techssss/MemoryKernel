@@ -537,5 +537,73 @@ def watch_status():
     except Exception as e:
         console.print(f"[bold red]Failed to get watcher status:[/bold red] {e}")
 
+# --- Sync Commands ---
+
+sync_app = typer.Typer(help="Synchronization management and observability")
+app.add_typer(sync_app, name="sync")
+
+@sync_app.command("stats")
+def sync_stats(workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")):
+    """Health metrics for Delta Sync and Merkle Tree hardening."""
+    workspace_id = workspace or get_workspace_id()
+    try:
+        if is_running():
+            # For simplicity, we fallback to local service if daemon doesn't have the endpoint yet
+            try:
+                resp = requests.get(f"{URL}/sync/stats", params={"workspace_id": workspace_id}).json()
+                if "error" not in resp:
+                    stats = resp
+                else: raise Exception(resp["error"])
+            except:
+                service = get_service()
+                from memk.workspace.manager import WorkspaceManager
+                ws = WorkspaceManager()
+                runtime = service.global_runtime.get_workspace_runtime(workspace_id, ws.get_db_path())
+                from memk.sync.stats import SyncStatsService
+                stats = SyncStatsService(runtime).get_sync_hardening_stats()
+        else:
+            service = get_service()
+            from memk.workspace.manager import WorkspaceManager
+            ws = WorkspaceManager()
+            runtime = service.global_runtime.get_workspace_runtime(workspace_id, ws.get_db_path())
+            from memk.sync.stats import SyncStatsService
+            stats = SyncStatsService(runtime).get_sync_hardening_stats()
+
+        if "error" in stats:
+            console.print(f"[bold red]Sync stats error:[/bold red] {stats['error']}")
+            return
+
+        console.print("[bold blue]🔄 Delta Sync Hardening Metrics[/bold blue]")
+        console.print()
+        
+        # Oplog
+        console.print("[bold]📜 Oplog (Write Log)[/bold]")
+        console.print(f"  Count: [cyan]{stats['oplog']['count']}[/cyan]")
+        console.print(f"  Oldest Entry: [cyan]{stats['oplog']['oldest_age_seconds']:.1f}s[/cyan] ago")
+        console.print(f"  Prunable: [cyan]{stats['oplog']['prunable_count']}[/cyan] entries")
+        console.print()
+        
+        # Replicas
+        console.print("[bold]👯 Replicas[/bold]")
+        console.print(f"  Active Replicas: [cyan]{stats['replicas']['checkpoint_count']}[/cyan]")
+        console.print(f"  Slowest Lag: [yellow]{stats['replicas']['slowest_lag_seconds']:.1f}s[/yellow]")
+        console.print()
+        
+        # Integrity
+        console.print("[bold]🛡  Data Integrity[/bold]")
+        stale_hash = stats['integrity']['stale_row_hash_count']
+        stale_bucket = stats['integrity']['stale_merkle_bucket_count']
+        console.print(f"  Stale Row Hashes: [{'red' if stale_hash > 0 else 'green'}]{stale_hash}[/]")
+        console.print(f"  Stale Merkle Buckets: [{'red' if stale_bucket > 0 else 'green'}]{stale_bucket}[/]")
+        console.print()
+        
+        # GC
+        console.print("[bold]🧹 Garbage Collection[/bold]")
+        console.print(f"  Last Run: [cyan]{stats['gc']['last_run']}[/cyan]")
+        console.print(f"  Last Pruned: [cyan]{stats['gc']['last_deleted_count']}[/cyan] items")
+        
+    except Exception as e:
+        console.print(f"[bold red]Sync stats failed:[/bold red] {e}")
+
 if __name__ == "__main__":
     app()

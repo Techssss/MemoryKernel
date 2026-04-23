@@ -51,6 +51,7 @@ class ScoreBreakdown:
     importance: float          # [0, 1] normalized from stored value
     recency: float             # Exponential decay score in [0, 1]
     confidence: float          # [0, 1] from stored value
+    graph_score: float = 0.0   # [0, 1] mapped from graph propagation
 
     # Computed final
     final_score: float = 0.0
@@ -66,6 +67,7 @@ class ScoreBreakdown:
             "importance": round(self.importance, 4),
             "recency": round(self.recency, 4),
             "confidence": round(self.confidence, 4),
+            "graph_score": round(self.graph_score, 4),
             "final_score": round(self.final_score, 4),
             "age_days": round(self.age_days, 1),
             "is_fact": self.is_fact,
@@ -75,7 +77,8 @@ class ScoreBreakdown:
         return (
             f"score={self.final_score:.3f} "
             f"[vec={self.vector_similarity:.2f} kw={self.keyword_score:.1f} "
-            f"imp={self.importance:.2f} rec={self.recency:.2f} conf={self.confidence:.2f}]"
+            f"imp={self.importance:.2f} rec={self.recency:.2f} conf={self.confidence:.2f} "
+            f"graph={self.graph_score:.2f}]"
         )
 
 
@@ -102,20 +105,21 @@ class ScoringWeights:
     w3: float = 0.20   # importance         (domain priority)
     w4: float = 0.15   # recency            (freshness / forgetting curve)
     w5: float = 0.10   # confidence         (epistemic certainty)
+    w6: float = 0.0    # graph score        (propagation centrality bonus)
 
     # Multiplier applied to facts over memories (denser, more reliable knowledge)
     fact_multiplier: float = 1.3
 
     def __post_init__(self):
         for name, val in [("w1", self.w1), ("w2", self.w2), ("w3", self.w3),
-                          ("w4", self.w4), ("w5", self.w5),
+                          ("w4", self.w4), ("w5", self.w5), ("w6", self.w6),
                           ("fact_multiplier", self.fact_multiplier)]:
             if val < 0:
                 raise ValueError(f"ScoringWeights.{name} must be >= 0, got {val}")
 
     @property
     def total(self) -> float:
-        return self.w1 + self.w2 + self.w3 + self.w4 + self.w5
+        return self.w1 + self.w2 + self.w3 + self.w4 + self.w5 + self.w6
 
     def normalize(self) -> "ScoringWeights":
         """Return a copy with weights scaled so they sum to 1.0."""
@@ -128,6 +132,7 @@ class ScoringWeights:
             w3=self.w3 / t,
             w4=self.w4 / t,
             w5=self.w5 / t,
+            w6=self.w6 / t,
             fact_multiplier=self.fact_multiplier,
         )
 
@@ -188,6 +193,7 @@ class MemoryScorer:
         importance: float,
         created_at: str,
         confidence: float,
+        graph_score: float = 0.0,
         is_fact: bool = False,
     ) -> ScoreBreakdown:
         """
@@ -207,6 +213,8 @@ class MemoryScorer:
             ISO 8601 timestamp string (stored as UTC in the DB).
         confidence : float
             Epistemic confidence of the item in [0, 1].
+        graph_score : float
+            Propagated centrality score from the knowledge graph in [0, 1].
         is_fact : bool
             If True, applies the fact_multiplier boost.
         """
@@ -215,6 +223,7 @@ class MemoryScorer:
         kw   = _clamp(keyword_score)
         imp  = _clamp(importance)
         conf = _clamp(confidence)
+        g_sc = _clamp(graph_score)
 
         age_days = _age_days(created_at)
         rec = self.recency_score(age_days)
@@ -226,6 +235,7 @@ class MemoryScorer:
             + w.w3 * imp
             + w.w4 * rec
             + w.w5 * conf
+            + w.w6 * g_sc
         )
 
         multiplier = w.fact_multiplier if is_fact else 1.0
@@ -237,6 +247,7 @@ class MemoryScorer:
             importance=imp,
             recency=rec,
             confidence=conf,
+            graph_score=g_sc,
             final_score=final,
             age_days=age_days,
             is_fact=is_fact,

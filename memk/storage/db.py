@@ -21,6 +21,8 @@ v0.4 production hardening
 import sqlite3
 import uuid
 import logging
+import json
+from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -28,8 +30,9 @@ import numpy as np
 
 from memk.storage.migrations import auto_migrate, check_schema_version
 from memk.storage.config import configure_connection, get_database_info
+from memk.core.hlc import GLOBAL_HLC
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("memk.storage")
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +101,13 @@ class MemoryDB:
                 access_count     INTEGER DEFAULT 0,
                 last_accessed_at TEXT,
                 decay_score      REAL    DEFAULT 1.0,
-                created_at       TEXT    NOT NULL
+                created_at       TEXT    NOT NULL,
+                centroid_id      TEXT,
+                heat_tier        INTEGER DEFAULT 0,
+                archived         INTEGER DEFAULT 0,
+                version_hlc      INTEGER DEFAULT 0,
+                version_node     TEXT,
+                version_seq      INTEGER DEFAULT 0
             )
         """
         create_facts = """
@@ -114,7 +123,10 @@ class MemoryDB:
                 last_accessed_at TEXT,
                 decay_score      REAL    DEFAULT 1.0,
                 created_at       TEXT    NOT NULL,
-                is_active        INTEGER DEFAULT 1
+                is_active        INTEGER DEFAULT 1,
+                version_hlc      INTEGER DEFAULT 0,
+                version_node     TEXT,
+                version_seq      INTEGER DEFAULT 0
             )
         """
         create_decisions = """
@@ -169,22 +181,48 @@ class MemoryDB:
         mem_id = str(uuid.uuid4())
         created_at = _utcnow()
         blob = _encode_blob(embedding) if embedding is not None else None
+        
+        hlc, node, seq = GLOBAL_HLC.next_version()
 
         sql = """
             INSERT INTO memories
-                (id, content, embedding, importance, confidence, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (id, content, embedding, importance, confidence, created_at, version_hlc, version_node, version_seq)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         try:
             with self._get_connection() as conn:
                 conn.execute(sql, (
                     mem_id, content.strip(), blob,
                     float(importance), float(confidence), created_at,
+                    hlc, node, seq
                 ))
+                
+                # Automatically log to sync tables
+                row_data = {
+                    "id": mem_id, "content": content.strip(), 
+                    "importance": importance, "confidence": confidence,
+                    "created_at": created_at,
+                    "version_hlc": hlc, "version_node": node, "version_seq": seq
+                }
+                self._log_sync_operation(conn, "memories", mem_id, "INSERT", row_data, (hlc, node, seq))
+                
             return mem_id
         except sqlite3.Error as e:
             logger.error(f"insert_memory failed: {e}")
             raise DatabaseError(f"Insertion failed: {e}") from e
+
+    def update_memory_content(self, mem_id: str, content: str) -> None:
+        """Fully update memory content and bump sync version."""
+        hlc, node, seq = GLOBAL_HLC.next_version()
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "UPDATE memories SET content = ?, version_hlc = ?, version_node = ?, version_seq = ? WHERE id = ?",
+                    (content.strip(), hlc, node, seq, mem_id)
+                )
+                self._log_sync_operation(conn, "memories", mem_id, "UPDATE", {}, (hlc, node, seq))
+        except sqlite3.Error as e:
+            raise DatabaseError(f"update_memory_content failed: {e}") from e
 
     def update_memory_embedding(self, mem_id: str, embedding: np.ndarray) -> None:
         """Backfill / refresh the stored embedding for a memory row."""
@@ -216,6 +254,85 @@ class MemoryDB:
         except sqlite3.Error as e:
             raise DatabaseError(f"touch_memory failed: {e}") from e
 
+    def update_memory_heat(self, mem_id: str, heat_tier: int) -> None:
+        """Update heat tier (for sharding/cache purging routines)."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "UPDATE memories SET heat_tier = ? WHERE id = ?",
+                    (heat_tier, mem_id)
+                )
+        except sqlite3.Error as e:
+            raise DatabaseError(f"heat update failed: {e}") from e
+
+    def update_memory_centroid(self, mem_id: str, centroid_id: str) -> None:
+        """Assign specific centroid to memory for vector partitioned retrieval."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "UPDATE memories SET centroid_id = ? WHERE id = ?",
+                    (centroid_id, mem_id)
+                )
+        except sqlite3.Error as e:
+            raise DatabaseError(f"centroid update failed: {e}") from e
+
+    def archive_memory(self, mem_id: str) -> None:
+        """Mark memory as archived (soft-delete / consolidated)."""
+        hlc, node, seq = GLOBAL_HLC.next_version()
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "UPDATE memories SET archived = 1, version_hlc = ?, version_node = ?, version_seq = ? WHERE id = ?", 
+                    (hlc, node, seq, mem_id)
+                )
+                self._log_sync_operation(conn, "memories", mem_id, "UPDATE", {}, (hlc, node, seq))
+        except sqlite3.Error as e:
+            raise DatabaseError(f"archive_memory failed: {e}") from e
+
+    def unarchive_memory(self, mem_id: str) -> None:
+        """Mark an archived memory as active again (rejuvenation)."""
+        hlc, node, seq = GLOBAL_HLC.next_version()
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "UPDATE memories SET archived = 0, version_hlc = ?, version_node = ?, version_seq = ? WHERE id = ?", 
+                    (hlc, node, seq, mem_id)
+                )
+                self._log_sync_operation(conn, "memories", mem_id, "UPDATE", {}, (hlc, node, seq))
+        except sqlite3.Error as e:
+            raise DatabaseError(f"unarchive_memory failed: {e}") from e
+
+    def _log_sync_operation(self, conn: sqlite3.Connection, table: str, row_id: str, op: str, row_data: dict, hlc_tuple: tuple) -> None:
+        """Centralized write log for Delta Sync using Oplog and Row Hashes."""
+        import hashlib
+        import json
+        
+        h, n, s = hlc_tuple
+        conn.execute(
+            "INSERT INTO oplog (version_hlc, version_node, version_seq, table_name, row_id, operation) VALUES (?, ?, ?, ?, ?, ?)",
+            (h, n, s, table, row_id, op)
+        )
+        # Fetch the canonical row to ensure hash matches schema identically across devices
+        full_row = conn.execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,)).fetchone()
+        if full_row:
+            row_dict = dict(full_row)
+            
+            # Sanitize bytes for JSON serialization (e.g., embeddings)
+            for k, v in row_dict.items():
+                if isinstance(v, bytes):
+                    row_dict[k] = v.hex()
+                    
+            dict_str = json.dumps(row_dict, sort_keys=True)
+            hash_val = hashlib.sha256(dict_str.encode("utf-8")).hexdigest()
+            
+            conn.execute(
+                "INSERT OR REPLACE INTO row_hash (table_name, row_id, hash_val, version_hlc) VALUES (?, ?, ?, ?)",
+                (table, row_id, hash_val, h)
+            )
+        elif op == "DELETE":
+            # Physically deleted items drop their bucket hash
+            conn.execute("DELETE FROM row_hash WHERE table_name = ? AND row_id = ?", (table, row_id))
+
     def search_memory(self, keyword: str) -> List[Dict[str, Any]]:
         """Case-insensitive LIKE search over memory content."""
         if not keyword:
@@ -231,15 +348,32 @@ class MemoryDB:
         except sqlite3.Error as e:
             raise DatabaseError(f"search_memory failed: {e}") from e
 
-    def get_all_memories(self) -> List[Dict[str, Any]]:
-        """Fetch every memory row for full-corpus vector scan."""
+    def stream_all_memories(self):
+        """Yield memory rows one by one to avoid large memory overhead."""
         try:
             with self._get_connection() as conn:
-                return [_to_dict(r) for r in conn.execute(
-                    "SELECT * FROM memories ORDER BY created_at DESC"
-                ).fetchall()]
+                cursor = conn.execute("SELECT * FROM memories ORDER BY created_at DESC")
+                while True:
+                    rows = cursor.fetchmany(1000)
+                    if not rows:
+                        break
+                    for r in rows:
+                        yield _to_dict(r)
         except sqlite3.Error as e:
-            raise DatabaseError(f"get_all_memories failed: {e}") from e
+            raise DatabaseError(f"stream_all_memories failed: {e}") from e
+
+    def get_all_memories(self) -> List[Dict[str, Any]]:
+        """Fetch every memory row (Legacy, use stream_all_memories for large DBs)."""
+        return list(self.stream_all_memories())
+
+    def get_memory_by_id(self, mem_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a specific memory by ID."""
+        try:
+            with self._get_connection() as conn:
+                row = conn.execute("SELECT * FROM memories WHERE id = ?", (mem_id,)).fetchone()
+                return _to_dict(row) if row else None
+        except sqlite3.Error as e:
+            raise DatabaseError(f"get_memory_by_id failed: {e}") from e
 
     def get_memories_without_embedding(self) -> List[Dict[str, Any]]:
         """Return rows that lack an embedding (for async backfill jobs)."""
@@ -381,15 +515,24 @@ class MemoryDB:
         except sqlite3.Error as e:
             raise DatabaseError(f"search_facts failed: {e}") from e
 
-    def get_all_active_facts(self) -> List[Dict[str, Any]]:
-        """Fetch all active fact rows for full-corpus vector scan."""
+    def stream_all_active_facts(self):
+        """Yield active facts for large-scale hydration."""
+        sql = "SELECT * FROM facts WHERE is_active = 1"
         try:
             with self._get_connection() as conn:
-                return [_to_dict(r) for r in conn.execute(
-                    "SELECT * FROM facts WHERE is_active = 1 ORDER BY created_at DESC"
-                ).fetchall()]
+                cursor = conn.execute(sql)
+                while True:
+                    rows = cursor.fetchmany(1000)
+                    if not rows:
+                        break
+                    for r in rows:
+                        yield _to_dict(r)
         except sqlite3.Error as e:
-            raise DatabaseError(f"get_all_active_facts failed: {e}") from e
+            raise DatabaseError(f"stream_all_active_facts failed: {e}") from e
+
+    def get_all_active_facts(self) -> List[Dict[str, Any]]:
+        """Fetch all active facts (Legacy, use stream_all_active_facts)."""
+        return list(self.stream_all_active_facts())
 
     def get_facts_without_embedding(self) -> List[Dict[str, Any]]:
         """Return active facts that lack an embedding."""
@@ -542,8 +685,130 @@ class MemoryDB:
             raise DatabaseError(f"log_decision failed: {e}") from e
 
     # ------------------------------------------------------------------
+    # Background Job Persistence (Storage side)
+    # ------------------------------------------------------------------
+
+    def insert_background_job(self, job_type: str, status: str) -> str:
+        """Create a persistent record of a background job."""
+        job_id = str(uuid.uuid4())[:8]
+        now = _utcnow()
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "INSERT INTO background_jobs (id, job_type, status, created_at) VALUES (?, ?, ?, ?)",
+                    (job_id, job_type, status, now)
+                )
+            return job_id
+        except sqlite3.Error as e:
+            raise DatabaseError(f"insert_background_job failed: {e}") from e
+
+    def complete_background_job(self, job_id: str, result: dict) -> None:
+        """Mark a job as completed and store its result JSON."""
+        now = _utcnow()
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "UPDATE background_jobs SET status = 'completed', completed_at = ?, result = ? WHERE id = ?",
+                    (now, json.dumps(result), job_id)
+                )
+        except sqlite3.Error as e:
+            raise DatabaseError(f"complete_background_job failed: {e}") from e
+
+    # ------------------------------------------------------------------
     # Observability
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Replica Checkpoint (Delta Sync)
+    # ------------------------------------------------------------------
+
+    def prune_oplog_entries(self, boundary_hlc: int, batch_size: int = 1000, dry_run: bool = False) -> int:
+        """
+        Delete oplog entries older than boundary_hlc (strictly less than).
+        """
+        try:
+            with self._get_connection() as conn:
+                if dry_run:
+                    cnt = conn.execute(
+                        "SELECT COUNT(*) as c FROM oplog WHERE version_hlc < ?",
+                        (boundary_hlc,)
+                    ).fetchone()["c"]
+                    return cnt
+                else:
+                    if batch_size > 0:
+                        cur = conn.execute(
+                            """
+                            DELETE FROM oplog WHERE rowid IN (
+                                SELECT rowid FROM oplog WHERE version_hlc < ? LIMIT ?
+                            )
+                            """,
+                            (boundary_hlc, batch_size)
+                        )
+                    else:
+                        cur = conn.execute("DELETE FROM oplog WHERE version_hlc < ?", (boundary_hlc,))
+                    return cur.rowcount
+        except sqlite3.Error as e:
+            raise DatabaseError(f"prune_oplog_entries failed: {e}") from e
+
+    def get_oplog_range(self) -> Dict[str, Optional[int]]:
+        """Return the min and max version_hlc currently available in the oplog."""
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT MIN(version_hlc) as min_hlc, MAX(version_hlc) as max_hlc FROM oplog").fetchone()
+            return {"min": row["min_hlc"], "max": row["max_hlc"]}
+
+    def get_latest_version_hlc(self) -> int:
+        """Get the absolute latest HLC version seen by this node across all tables."""
+        with self._get_connection() as conn:
+            # Check memories and facts for the latest version
+            m_max = conn.execute("SELECT MAX(version_hlc) FROM memories").fetchone()[0] or 0
+            f_max = conn.execute("SELECT MAX(version_hlc) FROM row_hash").fetchone()[0] or 0
+            return max(m_max, f_max)
+
+    def upsert_replica_checkpoint(
+        self, replica_id: str, hlc: int, node: str, seq: int, note: Optional[str] = None
+    ) -> None:
+        """
+        Record or blindly update a synchronized replica's watermark.
+        """
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO replica_checkpoint (replica_id, last_applied_hlc, last_applied_node, last_applied_seq, updated_ts, note)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(replica_id) DO UPDATE SET
+                        last_applied_hlc=excluded.last_applied_hlc,
+                        last_applied_node=excluded.last_applied_node,
+                        last_applied_seq=excluded.last_applied_seq,
+                        updated_ts=excluded.updated_ts,
+                        note=excluded.note
+                    WHERE excluded.last_applied_hlc >= last_applied_hlc
+                    """,
+                    (replica_id, hlc, node, seq, _utcnow(), note)
+                )
+        except sqlite3.Error as e:
+            raise DatabaseError(f"upsert_replica_checkpoint failed: {e}") from e
+
+    def get_replica_checkpoint(self, replica_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM replica_checkpoint WHERE replica_id = ?", (replica_id,)).fetchone()
+            return dict(row) if row else None
+
+    def list_replica_checkpoints(self) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute("SELECT * FROM replica_checkpoint ORDER BY updated_ts DESC").fetchall()
+            return [dict(r) for r in rows]
+
+    def get_min_acknowledged_hlc(self) -> Optional[int]:
+        """
+        Calculate the lowest synced cursor threshold across all recorded replica branches locally.
+        Used primarily by Garbage Collection daemons to identify safe prune boundaries for oplogs.
+        """
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT MIN(last_applied_hlc) as min_hlc FROM replica_checkpoint").fetchone()
+            if row and row["min_hlc"] is not None:
+                return int(row["min_hlc"])
+            return None
 
     def get_stats(self) -> Dict[str, Any]:
         """Aggregate statistics for `memk doctor` with production metrics."""
@@ -581,6 +846,45 @@ class MemoryDB:
                 }
         except sqlite3.Error as e:
             raise DatabaseError(f"get_stats failed: {e}") from e
+    def get_delta_since(self, since_hlc: int) -> List[Dict[str, Any]]:
+        """
+        Fetch all changes recorded in the oplog after since_hlc.
+        Returns a list of dicts: {table, row_id, payload}.
+        """
+        try:
+            with self._get_connection() as conn:
+                # Get unique modified rows from oplog since HLC
+                rows = conn.execute(
+                    """
+                    SELECT DISTINCT table_name, row_id 
+                    FROM oplog 
+                    WHERE version_hlc > ? 
+                    ORDER BY version_hlc ASC
+                    """,
+                    (since_hlc,)
+                ).fetchall()
+                
+                results = []
+                for r in rows:
+                    tbl = r["table_name"]
+                    row_id = r["row_id"]
+                    
+                    # Fetch current state of the row
+                    try:
+                        data = conn.execute(f"SELECT * FROM {tbl} WHERE id = ?", (row_id,)).fetchone()
+                        if data:
+                            results.append({
+                                "table": tbl,
+                                "row_id": row_id,
+                                "payload": _to_dict(data)
+                            })
+                    except Exception as e:
+                        logger.warning(f"get_delta_since: skipped {tbl}:{row_id}: {e}")
+                        continue
+                        
+                return results
+        except sqlite3.Error as e:
+            raise DatabaseError(f"get_delta_since failed: {e}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -621,3 +925,4 @@ def _most_accessed(conn: sqlite3.Connection, table: str) -> Optional[str]:
         return row[0] if row else None
     except Exception:
         return None
+

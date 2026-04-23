@@ -3,6 +3,8 @@ import numpy as np
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
+from collections import defaultdict
+
 logger = logging.getLogger("memk.index")
 
 @dataclass
@@ -15,6 +17,8 @@ class IndexEntry:
     created_at: str
     decay_score: float
     access_count: int
+    centroid_id: Optional[str] = None
+    heat_tier: int = 0
 
 class VectorIndex:
     """
@@ -26,11 +30,53 @@ class VectorIndex:
         self.vectors: Optional[np.ndarray] = None  # Shape: (N, dim)
         self.metadata: List[IndexEntry] = []
         self._id_to_idx: Dict[str, int] = {}
+        self._pending_vectors: List[np.ndarray] = []
+        
+        # IVF-like properties
+        self.centroid_matrix: Optional[np.ndarray] = None
+        self.centroid_ids: List[str] = []
+        self._shards: Dict[str, List[int]] = defaultdict(list)
 
     def clear(self):
         self.vectors = None
         self.metadata = []
         self._id_to_idx = {}
+        self._pending_vectors = []
+        self._shards.clear()
+
+    def set_centroids(self, centroids_map: Dict[str, np.ndarray]):
+        """Load trained centroid matrix for IVF routing"""
+        if not centroids_map:
+            self.centroid_matrix = None
+            self.centroid_ids = []
+            return
+            
+        self.centroid_ids = list(centroids_map.keys())
+        matrix = np.vstack(list(centroids_map.values()))
+        
+        # Normalize centroids for cosine dot scoring
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        self.centroid_matrix = np.divide(matrix, norms, out=np.zeros_like(matrix), where=norms!=0)
+
+    def _sync_vectors(self):
+        """Coalesce pending vectors into the main matrix."""
+        if not self._pending_vectors:
+            return
+        
+        new_block = np.vstack(self._pending_vectors)
+        if self.vectors is None:
+            self.vectors = new_block
+        else:
+            self.vectors = np.vstack([self.vectors, new_block])
+        self._pending_vectors = []
+        self._rebuild_shards()
+        
+    def _rebuild_shards(self):
+        """Map centroid IDs to row indices in self.vectors."""
+        self._shards.clear()
+        for idx, entry in enumerate(self.metadata):
+             cid = entry.centroid_id if entry.centroid_id else "unassigned"
+             self._shards[cid].append(idx)
 
     def add_entry(self, entry: IndexEntry, vector: np.ndarray):
         """Append a new entry to the in-memory index."""
@@ -41,17 +87,37 @@ class VectorIndex:
         norm = np.linalg.norm(vector)
         if norm > 1e-10:
             vector = vector / norm
-
-        if self.vectors is None:
-            self.vectors = vector.reshape(1, -1)
         else:
-            self.vectors = np.vstack([self.vectors, vector.reshape(1, -1)])
-        
+            vector = np.zeros(self.dim, dtype=np.float32)
+
         self._id_to_idx[entry.id] = len(self.metadata)
         self.metadata.append(entry)
+        self._pending_vectors.append(vector.reshape(1, -1))
+        
+        # Limit pending list size to keep search speed reasonable before sync
+        if len(self._pending_vectors) > 1000:
+            self._sync_vectors()
 
-    def search(self, query_vec: np.ndarray, top_k: int = 50) -> List[tuple[IndexEntry, float]]:
-        """Perform exhaustive (brute force) cosine similarity in RAM using NumPy."""
+    def bulk_add_entries(self, entries: List[IndexEntry], vectors: List[np.ndarray]):
+        """Efficiently add multiple entries at once."""
+        if not entries:
+            return
+        for entry, vector in zip(entries, vectors):
+            self._id_to_idx[entry.id] = len(self.metadata)
+            self.metadata.append(entry)
+            self._pending_vectors.append(vector.reshape(1, -1))
+        self._sync_vectors()
+
+    def search(
+        self, 
+        query_vec: np.ndarray, 
+        top_k: int = 50, 
+        nprobe: int = 3, 
+        min_heat: int = 0
+    ) -> List[tuple[IndexEntry, float]]:
+        """Perform similarity search using IVF-like shard routing if centroids are present, 
+        or fallback to exhaustive brute-force. Heat tier filtering prioritizes hot/warm items."""
+        self._sync_vectors()
         if self.vectors is None or len(self.metadata) == 0:
             return []
 
@@ -60,18 +126,49 @@ class VectorIndex:
         if norm > 1e-10:
             query_vec = query_vec / norm
 
-        # Compute cosine similarities via dot product: (N, D) @ (D, 1) -> (N, 1)
-        # Since both are normalized, dot product == cosine similarity
-        similarities = np.dot(self.vectors, query_vec)
+        scan_indices = []
+
+        # IVF Routing
+        if self.centroid_matrix is not None and len(self.centroid_ids) > 0:
+            # Route: Score query against all centroids (N_c x D @ D x 1) -> (N_c, 1)
+            cent_sims = np.dot(self.centroid_matrix, query_vec)
+            
+            # Select top-nprobe centroids
+            top_c_indices = np.argsort(cent_sims)[::-1][:nprobe]
+            
+            for c_idx in top_c_indices:
+                cid = self.centroid_ids[c_idx]
+                scan_indices.extend(self._shards.get(cid, []))
+                
+            # Always include unassigned memories so they aren't lost
+            scan_indices.extend(self._shards.get("unassigned", []))
+            
+        else:
+            # Brute force fallback
+            scan_indices = list(range(len(self.metadata)))
+
+        # Apply Heat Tier filter
+        if min_heat > 0:
+            scan_indices = [idx for idx in scan_indices if self.metadata[idx].heat_tier >= min_heat]
+
+        if not scan_indices:
+            return []
+
+        # Uniquify exact search bounds to prevent duplicate scans
+        scan_indices = list(set(scan_indices))
         
-        # Sort and get top-k
-        indices = np.argsort(similarities)[::-1][:top_k]
+        # Sub-matrix slicing and parallel similarity scoring
+        shard_vecs = self.vectors[scan_indices]
+        similarities = np.dot(shard_vecs, query_vec)
+        
+        # Sort and take local top-K
+        local_sort_idx = np.argsort(similarities)[::-1][:top_k]
         
         results = []
-        for idx in indices:
-            # Map [-1, 1] similarity to [0, 1]
-            score = (similarities[idx] + 1.0) / 2.0
-            results.append((self.metadata[idx], score))
+        for local_idx in local_sort_idx:
+            global_idx = scan_indices[local_idx]
+            score = (similarities[local_idx] + 1.0) / 2.0
+            results.append((self.metadata[global_idx], score))
             
         return results
 
