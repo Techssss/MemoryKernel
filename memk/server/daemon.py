@@ -13,7 +13,7 @@ from memk.api.v1 import router as v1_router
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("memk.daemon")
 
-app = FastAPI(title="MemoryKernel Daemon", version="1.0.0")
+app = FastAPI(title="MemoryKernel Daemon", version="0.1.0")
 
 # Include v1 API router
 app.include_router(v1_router)
@@ -100,7 +100,7 @@ async def add_process_time_header(request: Request, call_next):
 def health():
     return {
         "status": "ok", 
-        "version": "1.0.0",
+        "version": "0.1.0",
         "diagnostics": service.get_diagnostics()
     }
 

@@ -154,11 +154,11 @@ MemoryKernel/
   tests/                Pytest suite
   examples/             Usage examples and demos
   docs/                 Architecture notes and benchmark reports
-  neural-memory-main/   Tracked reference snapshot for comparison work
 ```
 
-Local runtime state belongs in `.memk/`, `.tmp/`, `tmp_*`, and generated `.db` files;
-these are ignored and should not be committed.
+Local runtime state belongs in `.memk/`, `.tmp/`, `tmp_*`, and generated `.db` files.
+External reference snapshots such as `neural-memory-main/` should stay outside Git
+tracking or live in a separate archive repository.
 
 ## Testing
 
@@ -212,6 +212,7 @@ docs/deep_stress_test_report.md
 - Package name: `memk`.
 - CLI entry point: `memk`.
 - Default daemon bind: `127.0.0.1:15301`.
+- CI runs Python tests, Python package build, and Node SDK build.
 - Data remains local unless an embedding/extraction provider you configure downloads
   or calls external models.
 - The project currently prefers correctness and recoverability over raw throughput.
@@ -224,8 +225,7 @@ docs/deep_stress_test_report.md
 - Expand real-world benchmark datasets beyond synthetic stress data.
 - Improve extractor quality and configurable model management.
 - Add stronger daemon security and multi-user deployment guidance.
-- Decide whether the `neural-memory-main/` reference snapshot stays in this repository
-  or moves to a separate archive.
+- Archive external comparison snapshots outside the main source tree.
 
 ## License
 

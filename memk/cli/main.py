@@ -35,15 +35,27 @@ def get_workspace_id() -> str:
         pass
     return "default"
 
+def _post_v1(endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """POST to the versioned daemon API and return decoded JSON."""
+    resp = requests.post(f"{URL}/v1/{endpoint.lstrip('/')}", json=payload, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+def _response_data(resp: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle both v1 APIResponse and older flat daemon responses."""
+    data = resp.get("data")
+    return data if isinstance(data, dict) else resp
+
 def _add_memory(content: str, importance: float, confidence: float, workspace: Optional[str]) -> None:
     """Shared implementation for memory write commands."""
     workspace_id = workspace or get_workspace_id()
     try:
         if is_running():
-            resp = requests.post(f"{URL}/add", json={
+            resp = _post_v1("remember", {
                 "content": content, "importance": importance, "confidence": confidence, "workspace_id": workspace_id
-            }).json()
-            console.print(f"[green]Added via Daemon![/green] ID: [cyan]{resp['id'][:8]}...[/cyan] (WS: {workspace_id[:8]}...)")
+            })
+            data = _response_data(resp)
+            console.print(f"[green]Added via Daemon![/green] ID: [cyan]{data['id'][:8]}...[/cyan] (WS: {workspace_id[:8]}...)")
             return
 
         service = get_service()
@@ -147,8 +159,8 @@ def search(
     workspace_id = workspace or get_workspace_id()
     try:
         if is_running():
-            resp = requests.post(f"{URL}/search", json={"query": query, "limit": limit, "workspace_id": workspace_id}).json()
-            results = resp.get("results", [])
+            resp = _post_v1("search", {"query": query, "limit": limit, "workspace_id": workspace_id})
+            results = _response_data(resp).get("results", [])
         else:
             service = get_service()
             import asyncio
@@ -178,10 +190,10 @@ def context(
     workspace_id = workspace or get_workspace_id()
     try:
         if is_running():
-            resp = requests.post(f"{URL}/context", json={
+            resp = _post_v1("context", {
                 "query": query, "max_chars": max_chars, "threshold": threshold, "workspace_id": workspace_id
-            }).json()
-            ctx = resp.get("context", "")
+            })
+            ctx = _response_data(resp).get("context", "")
         else:
             service = get_service()
             import asyncio

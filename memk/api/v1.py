@@ -276,7 +276,7 @@ async def health():
     
     Returns OK if service is running.
     """
-    return {"status": "ok", "version": "1.0.0"}
+    return {"status": "ok", "version": "0.1.0"}
 
 
 @router.get("/metrics", response_model=APIResponse)
