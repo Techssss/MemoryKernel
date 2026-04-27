@@ -29,7 +29,7 @@ class SyncStatsService:
         now_ms = int(time.time() * 1000)
         
         try:
-            with self.db._get_connection() as conn:
+            with self.db.connection() as conn:
                 def scalar(q, params=()):
                     res = conn.execute(q, params).fetchone()
                     return res[0] if res and res[0] is not None else 0

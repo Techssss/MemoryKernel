@@ -1,6 +1,7 @@
 import json
 import logging
 import threading
+import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, Dict
 from memk.core.service import MemoryKernelService
@@ -29,11 +30,11 @@ class IPCRequestProcessor:
             
             result = None
             if action == "search":
-                result = self.service.search(**args)
+                result = asyncio.run(self.service.search(**args))
             elif action == "add":
-                result = self.service.add_memory(**args)
+                result = asyncio.run(self.service.add_memory(**args))
             elif action == "context":
-                result = self.service.build_context(**args)
+                result = asyncio.run(self.service.build_context(**args))
             elif action == "doctor":
                 result = self.service.get_diagnostics()
             else:

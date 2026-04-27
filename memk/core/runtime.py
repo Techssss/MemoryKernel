@@ -26,6 +26,7 @@ from memk.retrieval.index import VectorIndex, IndexEntry
 from memk.core.cache import MemoryCacheManager
 from memk.core.jobs import BackgroundJobManager
 from memk.storage.graph_repository import GraphRepository
+from memk.core.graph_index import GraphIndex
 
 logger = logging.getLogger("memk.runtime")
 
@@ -62,6 +63,7 @@ class WorkspaceRuntime:
         
         # Graph sidecar — safe init (None if tables don't exist)
         self.graph_repo = self._create_graph_repo()
+        self.graph_index: Optional[GraphIndex] = self._create_graph_index()
         
         self.telemetry = TelemetryData()
         self.last_active = time.time()
@@ -72,6 +74,7 @@ class WorkspaceRuntime:
             self.cache.set_generation(current_gen)
         
         self._hydrate_index()
+        self.refresh_graph_index()
 
     @staticmethod
     def _create_extractor():
@@ -103,6 +106,23 @@ class WorkspaceRuntime:
         except Exception as e:
             logger.debug(f"[{self.workspace_id}] Graph repo init skipped: {e}")
         return None
+
+    def _create_graph_index(self) -> Optional[GraphIndex]:
+        """Create the in-memory graph index when graph storage is available."""
+        if self.graph_repo is None:
+            return None
+        return GraphIndex(self.db_path)
+
+    def refresh_graph_index(self) -> bool:
+        """Refresh the in-memory graph sidecar from SQLite."""
+        if self.graph_index is None:
+            return False
+        try:
+            self.graph_index.refresh(self.workspace_id)
+            return True
+        except Exception as e:
+            logger.warning(f"[{self.workspace_id}] Graph index refresh failed: {e}")
+            return False
 
     def get_generation(self) -> int:
         """Get current generation from workspace manifest."""
@@ -162,10 +182,17 @@ class WorkspaceRuntime:
         self.telemetry.index_size = len(self.index)
 
     def get_diagnostics(self) -> Dict[str, Any]:
+        graph_stats = None
+        if self.graph_repo is not None:
+            graph_stats = {
+                "storage": self.graph_repo.get_graph_stats(self.workspace_id),
+                "index": self.graph_index.get_stats() if self.graph_index else None,
+            }
         return {
             "workspace_id": self.workspace_id,
             "generation": self.get_generation(),
             "index_entries": len(self.index),
+            "graph": graph_stats,
             "cache": self.cache.get_stats(),
             "active_jobs": len([j for j in self.jobs.jobs.values() if j.status == "running"]),
             "telemetry": asdict(self.telemetry),

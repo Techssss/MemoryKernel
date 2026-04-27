@@ -8,14 +8,14 @@ Provides safe, forward-only migrations with version tracking.
 
 import sqlite3
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Callable, Tuple
 from dataclasses import dataclass
 
 logger = logging.getLogger("memk.migrations")
 
 # Current schema version
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 13
 
 @dataclass
 class Migration:
@@ -148,7 +148,7 @@ def migrate_v3_to_v4(conn: sqlite3.Connection):
     # Store database identity
     import uuid
     db_id = str(uuid.uuid4())
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     
     conn.execute("""
         INSERT OR IGNORE INTO db_metadata (key, value, updated_at)
@@ -379,6 +379,26 @@ def migrate_v11_to_v12(conn: sqlite3.Connection):
         pass
 
 
+def migrate_v12_to_v13(conn: sqlite3.Connection):
+    """Add missing HLC sync fields to facts.
+
+    New databases already get these columns from MemoryDB.init_db(), but
+    databases created through the migration path before this version did not.
+    Keeping this migration additive preserves upgrade safety.
+    """
+    for ddl in (
+        "ALTER TABLE facts ADD COLUMN version_hlc INTEGER DEFAULT 0",
+        "ALTER TABLE facts ADD COLUMN version_node TEXT",
+        "ALTER TABLE facts ADD COLUMN version_seq INTEGER DEFAULT 0",
+    ):
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            pass
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_hlc ON facts(version_hlc DESC)")
+
+
 # ---------------------------------------------------------------------------
 # Migration Registry
 # ---------------------------------------------------------------------------
@@ -396,6 +416,7 @@ MIGRATIONS: List[Migration] = [
     Migration(10, "Add replica checkpoint tracking", migrate_v9_to_v10),
     Migration(11, "Add conflict record table", migrate_v10_to_v11),
     Migration(12, "Add resolved_ts to conflict_record", migrate_v11_to_v12),
+    Migration(13, "Add HLC sync fields to facts", migrate_v12_to_v13),
 ]
 
 
@@ -433,7 +454,7 @@ class MigrationEngine:
             conn.execute("""
                 INSERT INTO schema_version (version, applied_at, description)
                 VALUES (?, ?, ?)
-            """, (migration.version, datetime.utcnow().isoformat(), migration.description))
+            """, (migration.version, datetime.now(timezone.utc).isoformat(), migration.description))
             
             conn.commit()
             logger.info(f"✓ Migration v{migration.version} applied successfully")

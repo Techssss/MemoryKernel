@@ -28,6 +28,9 @@ ENV/
 skills/
 skills-lock.json
 
+# Local MemoryKernel workspace state
+.memk/
+
 # Logs
 *.log
 *.pid
@@ -45,9 +48,13 @@ test_output*.txt
 *.db-journal
 
 # Temporary files
+.tmp/
 tmp/
 tmp_*/
 bench_tmp*/
+bench_weakness/
+tmp_pytest/
+tmp_test_*/
 stress_test_output*.txt
 *report.md
 *roadmap.md

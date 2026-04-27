@@ -6,5 +6,7 @@ Public SDK for MemoryKernel integration.
 
 from .client import MemoryKernel, MemoryItem, WorkspaceStatus
 
-__all__ = ["MemoryKernel", "MemoryItem", "WorkspaceStatus"]
-__version__ = "1.0.0"
+MemoryKernelClient = MemoryKernel
+
+__all__ = ["MemoryKernel", "MemoryKernelClient", "MemoryItem", "WorkspaceStatus"]
+__version__ = "0.1.0"

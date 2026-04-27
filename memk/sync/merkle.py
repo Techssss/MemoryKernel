@@ -22,7 +22,7 @@ class MerkleService:
         Returns the new state of the buckets.
         """
         try:
-            with self.db._get_connection() as conn:
+            with self.db.connection() as conn:
                 rows = conn.execute("SELECT hash_val FROM row_hash").fetchall()
                 
                 buckets = {i: [] for i in range(self.num_buckets)}
@@ -62,7 +62,7 @@ class MerkleService:
         """
         stats = {"orphans_deleted": 0, "hashes_corrected": 0, "dry_run": dry_run}
         
-        with self.db._get_connection() as conn:
+        with self.db.connection() as conn:
             tables = [r["table_name"] for r in conn.execute("SELECT DISTINCT table_name FROM row_hash").fetchall()]
             
             for t in tables:
@@ -111,7 +111,7 @@ class MerkleService:
         """
         stats = {"buckets_deleted": 0, "buckets_refreshed": 0, "dry_run": dry_run}
         try:
-            with self.db._get_connection() as conn:
+            with self.db.connection() as conn:
                 rows = conn.execute("SELECT hash_val FROM row_hash").fetchall()
                 
                 # Aggregate state mappings

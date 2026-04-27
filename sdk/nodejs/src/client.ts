@@ -16,7 +16,7 @@ import type {
   APIResponse
 } from './types';
 
-const DEFAULT_DAEMON_URL = 'http://localhost:8734';
+const DEFAULT_DAEMON_URL = process.env.MEMK_DAEMON_URL || 'http://127.0.0.1:15301';
 
 export interface MemoryKernelOptions {
   daemonUrl?: string;

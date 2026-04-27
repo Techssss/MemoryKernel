@@ -4,6 +4,7 @@ import uuid
 
 from memk.core.hlc import HLClock, GLOBAL_HLC
 from memk.core.runtime import get_runtime
+from memk.storage.db import MemoryDB
 
 def test_hlc_monotonically_increasing():
     clock = HLClock(node_id="test_node")
@@ -45,7 +46,7 @@ def test_db_insert_applies_hlc():
         mem_id = db.insert_memory("Testing distributed sync schemas")
         
         # Verify
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             row = conn.execute("SELECT version_hlc, version_node, version_seq FROM memories WHERE id = ?", (mem_id,)).fetchone()
             
             assert row is not None
@@ -61,3 +62,47 @@ def test_db_insert_applies_hlc():
                 os.remove(tmp_path + "-shm")
             except:
                 pass
+
+
+def test_fact_insert_applies_hlc_and_oplog():
+    tmp_path = f"test_fact_hlc_{uuid.uuid4().hex[:8]}.db"
+    db = MemoryDB(db_path=tmp_path)
+    db.init_db()
+
+    try:
+        GLOBAL_HLC.node_id = "test_fact_node"
+
+        fact_id = db.insert_fact("Alice", "uses", "Python")
+
+        with db.connection() as conn:
+            fact = conn.execute(
+                "SELECT version_hlc, version_node, version_seq FROM facts WHERE id = ?",
+                (fact_id,),
+            ).fetchone()
+            assert fact is not None
+            assert fact["version_hlc"] > 0
+            assert fact["version_node"] == "test_fact_node"
+            assert fact["version_seq"] >= 0
+
+            op = conn.execute(
+                "SELECT * FROM oplog WHERE table_name = 'facts' AND row_id = ?",
+                (fact_id,),
+            ).fetchone()
+            assert op is not None
+            assert op["operation"] == "INSERT"
+
+            row_hash = conn.execute(
+                "SELECT * FROM row_hash WHERE table_name = 'facts' AND row_id = ?",
+                (fact_id,),
+            ).fetchone()
+            assert row_hash is not None
+            assert len(row_hash["hash_val"]) == 64
+
+    finally:
+        for suffix in ("", "-wal", "-shm"):
+            path = tmp_path + suffix
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except:
+                    pass

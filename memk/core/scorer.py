@@ -10,6 +10,7 @@ Scoring formula
                 + w3 * importance
                 + w4 * recency
                 + w5 * confidence
+                + w6 * graph_score
 
 All component scores are normalized to [0, 1] before weighting so that no
 single dimension can dominate by accident.
@@ -89,7 +90,7 @@ class ScoreBreakdown:
 @dataclass
 class ScoringWeights:
     """
-    Five-dimensional weight vector.
+    Six-dimensional weight vector.
     Weights do NOT need to sum to 1 — they are relative priorities.
     Component scores are each in [0, 1] so the max possible final score
     equals the sum of all weights.
@@ -105,7 +106,7 @@ class ScoringWeights:
     w3: float = 0.20   # importance         (domain priority)
     w4: float = 0.15   # recency            (freshness / forgetting curve)
     w5: float = 0.10   # confidence         (epistemic certainty)
-    w6: float = 0.0    # graph score        (propagation centrality bonus)
+    w6: float = 0.10   # graph score        (propagation centrality bonus)
 
     # Multiplier applied to facts over memories (denser, more reliable knowledge)
     fact_multiplier: float = 1.3

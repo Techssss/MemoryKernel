@@ -6,7 +6,7 @@
  * Simple, type-safe client for integrating local project memory.
  */
 
-export { MemoryKernel } from './client';
+export { MemoryKernel, MemoryKernel as MemoryKernelClient } from './client';
 export type {
   MemoryItem,
   WorkspaceStatus,

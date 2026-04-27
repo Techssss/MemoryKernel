@@ -37,13 +37,13 @@ def test_merkle_cleanup_lifecycle():
         # Build initial buckets
         merkle.rebuild_or_refresh_merkle_buckets(100)
         
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             cnt_row_hash = conn.execute("SELECT COUNT(*) as c FROM row_hash").fetchone()["c"]
             cnt_buckets = conn.execute("SELECT COUNT(*) as c FROM merkle_bucket").fetchone()["c"]
         assert cnt_row_hash >= 2
         
         # 1. Simulate hard physical row deletion without oplog interceptors (Abrupt vanishing)
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             conn.execute("DELETE FROM memories WHERE id = ?", (memA_id,))
         
         # Dry Run Orphans
@@ -57,7 +57,7 @@ def test_merkle_cleanup_lifecycle():
         assert stats["orphans_deleted"] == 1
         
         # Row A hash is now gone. Let's see scope clearance.
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             conn.execute("DELETE FROM row_hash WHERE table_name = 'memories'") # Nuke everything to test empty scopes
             conn.execute("DELETE FROM memories")
             
@@ -66,7 +66,7 @@ def test_merkle_cleanup_lifecycle():
         sweep_stats = merkle.rebuild_or_refresh_merkle_buckets(101)
         assert sweep_stats["buckets_deleted"] > 0
         
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             cnt_buckets = conn.execute("SELECT COUNT(*) as c FROM merkle_bucket").fetchone()["c"]
         assert cnt_buckets == 0
         
@@ -74,14 +74,14 @@ def test_merkle_cleanup_lifecycle():
         memC_id = db.insert_memory("Drifting record")
         db.update_memory_embedding(memC_id, np.array([0.1, 0.2, 0.3], dtype=np.float32))
         # Manually tamper with the row_hash to simulate it being stale!
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             conn.execute("UPDATE row_hash SET hash_val = 'STALE_BOGUS_HASH' WHERE row_id = ?", (memC_id,))
             
         # Repair!
         stats_repair = merkle.cleanup_stale_row_hashes(verify_content_hash=True, dry_run=False)
         assert stats_repair["hashes_corrected"] == 1
         
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             restored = conn.execute("SELECT hash_val FROM row_hash WHERE row_id = ?", (memC_id,)).fetchone()
         assert restored["hash_val"] != "STALE_BOGUS_HASH"
         

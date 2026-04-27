@@ -88,7 +88,7 @@ def test_run_oplog_gc_job_execution():
     try:
         now_ms = 1000000000000
         
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             # Insert raw ops manually to simulate historical actions
             # We'll make them all chronologically far behind the retention limit
             for i in range(10):
@@ -103,7 +103,7 @@ def test_run_oplog_gc_job_execution():
                 (now_ms - 100, "nodeA", 0, "INSERT", "memories", "mem_new")
             )
             
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             # Total oplogs: 11
             cnt_opt = conn.execute("SELECT COUNT(*) as c FROM oplog").fetchone()["c"]
         
@@ -115,7 +115,7 @@ def test_run_oplog_gc_job_execution():
         assert stats["deleted_count"] == 10 # 10 elements are caught in the boundary
         
         # Oplog size should remain unchanged
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             cnt_opt = conn.execute("SELECT COUNT(*) as c FROM oplog").fetchone()["c"]
         assert cnt_opt == 11
         
@@ -131,7 +131,7 @@ def test_run_oplog_gc_job_execution():
         assert stats["batches"] == 3 # 2 + 2 + 1 (+ final return)
         
         # Final physical size
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             cnt_opt = conn.execute("SELECT COUNT(*) as c FROM oplog").fetchone()["c"]
         assert cnt_opt == 6 # 11 - 5
         

@@ -4,6 +4,7 @@ memk.core — Core interfaces, data models, and utilities.
 
 from .embedder import (
     BaseEmbedder,
+    HashingEmbedder,
     SentenceTransformerEmbedder,
     TFIDFEmbedder,
     get_default_embedder,
@@ -14,6 +15,7 @@ from .embedder import (
 
 __all__ = [
     "BaseEmbedder",
+    "HashingEmbedder",
     "SentenceTransformerEmbedder",
     "TFIDFEmbedder",
     "get_default_embedder",

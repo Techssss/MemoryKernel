@@ -46,7 +46,7 @@ async def demo_basic_generation_tracking():
         
         # Create service
         RuntimeManager._instance = None
-        service = MemoryKernelService()
+        service = MemoryKernelService(allow_direct_writes=True)
         
         # Add first memory
         print("\n→ Adding memory: 'User prefers Python'")
@@ -91,7 +91,7 @@ async def demo_stale_context_detection():
         ws_id = manifest.brain_id
         
         RuntimeManager._instance = None
-        service = MemoryKernelService()
+        service = MemoryKernelService(allow_direct_writes=True)
         
         # Add initial data
         print("\n→ Adding initial memory")
@@ -157,7 +157,7 @@ async def demo_cache_invalidation():
         ws_id = manifest.brain_id
         
         RuntimeManager._instance = None
-        service = MemoryKernelService()
+        service = MemoryKernelService(allow_direct_writes=True)
         
         # Add initial data
         print("\n→ Adding memory: 'Python is great'")
@@ -218,7 +218,7 @@ async def demo_multi_workspace_isolation():
         ws_id2 = manifest2.brain_id
         
         RuntimeManager._instance = None
-        service = MemoryKernelService()
+        service = MemoryKernelService(allow_direct_writes=True)
         
         print(f"\n✓ Workspace 1: {ws_id1[:8]}...")
         print(f"  Generation: {ws_mgr1.get_generation()}")

@@ -30,7 +30,7 @@ class MemoryRejuvenator:
         
         Returns True if the memory was successfully rejuvenated.
         """
-        with self.db._get_connection() as conn:
+        with self.db.connection() as conn:
             row = conn.execute("SELECT archived, access_count FROM memories WHERE id = ?", (memory_id,)).fetchone()
             
         if not row or row["archived"] != 1:
@@ -51,7 +51,7 @@ class MemoryRejuvenator:
         Forces an archived memory to wake up. Often used when a conflicting fact is inserted.
         This throws the memory back into the ACTIVE pool so the Consolidator will reprocess it.
         """
-        with self.db._get_connection() as conn:
+        with self.db.connection() as conn:
             row = conn.execute("SELECT archived FROM memories WHERE id = ?", (memory_id,)).fetchone()
             
         if not row or row["archived"] == 0:
@@ -61,7 +61,7 @@ class MemoryRejuvenator:
         
         # Boost importance so it becomes a strong candidate in next consolidation
         try:
-            with self.db._get_connection() as conn:
+            with self.db.connection() as conn:
                 conn.execute(
                     "UPDATE memories SET importance = MAX(importance, 0.8) WHERE id = ?", 
                     (memory_id,)

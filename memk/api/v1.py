@@ -110,7 +110,7 @@ async def search(req: SearchRequest):
         # Convert results to MemoryItem models
         items = [MemoryItem(**item) for item in result["results"]]
         
-        data = {"results": [item.dict() for item in items]}
+        data = {"results": [item.model_dump() for item in items]}
         metadata = APIMetadata(**result["metadata"])
         
         return APIResponse(data=data, metadata=metadata)

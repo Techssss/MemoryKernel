@@ -44,7 +44,7 @@ async def run_discovery_test():
     runtime_mgr.shared_embedder = MockEmbedder()
     runtime_mgr.embedder_pipeline = EmbeddingPipeline(runtime_mgr.shared_embedder)
     
-    service = MemoryKernelService()
+    service = MemoryKernelService(allow_direct_writes=True)
     
     # --- TEST 1: RIGID EXTRACTION (The Weakness) ---
     print("Testing Fact Extraction Rigidity...")
@@ -69,7 +69,8 @@ async def run_discovery_test():
     # High importance update
     await service.add_memory("SECURITY ALERT: The master password has been changed to 'complex!@#456'", workspace_id=brain_id, importance=1.0)
     
-    results = await service.search("master password", workspace_id=brain_id, limit=1)
+    response = await service.search("master password", workspace_id=brain_id, limit=1)
+    results = response.get("results", [])
     top_result = results[0]['content'] if results else ""
     is_correct = "complex" in top_result
     log_test("Importance Overruling", is_correct, f"Top result: {top_result}")
@@ -82,7 +83,8 @@ async def run_discovery_test():
     # Query for something that requires connecting the two
     # A graph DB (nmem) would find South Building easily.
     # A vector RAG (memk) might only find the first one if the query is "Project Zulu location".
-    results = await service.search("Where is the team for Project Zulu located?", workspace_id=brain_id, limit=3)
+    response = await service.search("Where is the team for Project Zulu located?", workspace_id=brain_id, limit=3)
+    results = response.get("results", [])
     
     found_south = any("South Building" in r['content'] for r in results)
     log_test("Multi-hop Retrieval", found_south, "Retrieved 'South Building' when querying about 'Project Zulu'")
@@ -100,7 +102,8 @@ async def run_discovery_test():
     await service.add_memory(target, workspace_id=brain_id, importance=0.8)
     
     start_q = time.perf_counter()
-    search_res = await service.search("vault secret key", workspace_id=brain_id, limit=5)
+    response = await service.search("vault secret key", workspace_id=brain_id, limit=5)
+    search_res = response.get("results", [])
     end_q = time.perf_counter()
     
     found_target = any("42" in r['content'] for r in search_res)

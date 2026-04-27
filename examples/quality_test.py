@@ -52,10 +52,10 @@ async def run_quality_test():
     print("[*] Inserting a 'needle' memory into the 100k haystack...")
     mem_id = workspace.db.insert_memory(needle_content, embedding=needle_vec, importance=1.0)
     # Add to index too (as we are bypasssing service layer for speed)
-    from datetime import datetime
+    from datetime import datetime, timezone
     entry = IndexEntry(
         id=mem_id, item_type="memory", content=needle_content,
-        importance=1.0, confidence=1.0, created_at=datetime.utcnow().isoformat(),
+        importance=1.0, confidence=1.0, created_at=datetime.now(timezone.utc).isoformat(),
         decay_score=1.0, access_count=0
     )
     workspace.index.add_entry(entry, needle_vec)

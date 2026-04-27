@@ -100,6 +100,7 @@ async def add_process_time_header(request: Request, call_next):
 def health():
     return {
         "status": "ok", 
+        "version": "1.0.0",
         "diagnostics": service.get_diagnostics()
     }
 
@@ -113,16 +114,14 @@ async def add_memory(req: AddRequest):
 @app.post("/search")
 async def search(req: SearchRequest):
     try:
-        results = await service.search(req.query, req.limit, req.workspace_id)
-        return {"results": results}
+        return await service.search(req.query, req.limit, req.workspace_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/context")
 async def build_context(req: ContextRequest):
     try:
-        context_str = await service.build_context(req.query, req.max_chars, req.threshold, req.workspace_id)
-        return {"context": context_str}
+        return await service.build_context(req.query, req.max_chars, req.threshold, req.workspace_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

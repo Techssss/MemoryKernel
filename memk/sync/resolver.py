@@ -19,7 +19,7 @@ Current limitations
 import json
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 from memk.storage.db import MemoryDB, DatabaseError
@@ -120,9 +120,9 @@ class ConflictResolver:
 
     def _mark_resolved(self, conflict_id: str, strategy: str) -> None:
         """Update status, resolution strategy, and resolved_ts atomically."""
-        resolved_ts = datetime.utcnow().isoformat()
+        resolved_ts = datetime.now(timezone.utc).isoformat()
         try:
-            with self.db._get_connection() as conn:
+            with self.db.connection() as conn:
                 conn.execute(
                     """
                     UPDATE conflict_record
@@ -160,7 +160,7 @@ class ConflictResolver:
         values.append(row_id)
 
         try:
-            with self.db._get_connection() as conn:
+            with self.db.connection() as conn:
                 conn.execute(
                     f"UPDATE {table_name} SET {set_clause} WHERE id = ?",
                     tuple(values),
@@ -184,4 +184,3 @@ class ConflictResolver:
             raise DatabaseError(
                 f"_force_write_snapshot failed for {table_name}:{row_id}: {e}"
             ) from e
-

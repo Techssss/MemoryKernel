@@ -2,18 +2,22 @@ import asyncio
 import os
 import time
 import random
-import psutil
 import shutil
 import numpy as np
 import sys
 import sqlite3
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 from memk.core.service import MemoryKernelService
 from memk.core.runtime import get_runtime
 from memk.workspace.manager import WorkspaceManager
 from memk.core.embedder import BaseEmbedder, EmbeddingPipeline, encode_embedding
+
+try:
+    import psutil
+except ImportError:  # pragma: no cover - benchmark environment fallback
+    psutil = None
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -48,7 +52,7 @@ def bulk_insert_memories(db_path, count, batch_size=5000):
                 encode_embedding(vec),
                 0.5, # importance
                 1.0, # confidence
-                datetime.utcnow().isoformat() # created_at
+                datetime.now(timezone.utc).isoformat() # created_at
             ))
         
         conn.executemany(
@@ -65,7 +69,7 @@ def bulk_insert_memories(db_path, count, batch_size=5000):
 async def run_enterprise_benchmark(total_items=100000):
     log(f"Starting Optimized Enterprise Benchmark: {total_items} items")
     
-    test_dir = Path("d:/WorkSpace/AI/MemoryKernel/bench_tmp").resolve()
+    test_dir = Path("bench_tmp").resolve()
     if test_dir.exists(): shutil.rmtree(test_dir, ignore_errors=True)
     test_dir.mkdir(parents=True, exist_ok=True)
     
@@ -80,8 +84,8 @@ async def run_enterprise_benchmark(total_items=100000):
 
     # 2. Service Startup & Indexing
     log("\n--- Phase 2: Service Startup & Indexing ---")
-    process = psutil.Process(os.getpid())
-    mem_before = process.memory_info().rss / 1024 / 1024
+    process = psutil.Process(os.getpid()) if psutil is not None else None
+    mem_before = process.memory_info().rss / 1024 / 1024 if process else 0.0
     
     start_up = time.perf_counter()
     runtime_mgr = get_runtime()
@@ -93,17 +97,20 @@ async def run_enterprise_benchmark(total_items=100000):
     runtime = runtime_mgr.get_workspace_runtime(brain_id, db_path)
     startup_time = time.perf_counter() - start_up
     
-    mem_after = process.memory_info().rss / 1024 / 1024
+    mem_after = process.memory_info().rss / 1024 / 1024 if process else 0.0
     db_size = os.path.getsize(db_path) / 1024 / 1024
     
     log(f"Startup & Indexing Time: {startup_time:.2f}s")
     log(f"RAM Index Size: {len(runtime.index)} entries")
-    log(f"RAM Usage: {mem_after:.2f} MB (Delta: {mem_after - mem_before:.2f} MB)")
+    if process:
+        log(f"RAM Usage: {mem_after:.2f} MB (Delta: {mem_after - mem_before:.2f} MB)")
+    else:
+        log("RAM Usage: unavailable (psutil not installed)")
     log(f"DB Size: {db_size:.2f} MB")
 
     # 3. Query Performance
     log("\n--- Phase 3: Query Performance (1000 searches) ---")
-    service = MemoryKernelService()
+    service = MemoryKernelService(allow_direct_writes=True)
     latencies = []
     
     for k in range(1000):
@@ -129,11 +136,12 @@ async def run_enterprise_benchmark(total_items=100000):
         )
     
     # Small delay for index sync simulation or manual rebuild
-    runtime.index.rebuild(runtime.db)
+    runtime.index.clear()
+    runtime._hydrate_index()
     
     log("  Searching for 'vault oak tree'...")
     res = await service.search("vault oak tree", workspace_id=brain_id)
-    if any("ALFA_999" in r["content"] for r in res):
+    if any("ALFA_999" in r["content"] for r in res.get("results", [])):
         log("  Accuracy: Success! Found targeted memory in 100k haystack.")
     else:
         log("  Accuracy: Failed.")

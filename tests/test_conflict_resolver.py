@@ -39,7 +39,7 @@ def env():
 
 def _insert_memory_raw(db, mem_id, content, hlc):
     """Helper: insert a memory row with a specific id and hlc."""
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         conn.execute(
             """
             INSERT OR REPLACE INTO memories

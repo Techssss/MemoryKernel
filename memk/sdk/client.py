@@ -8,13 +8,14 @@ Simple, intuitive API for integrating memory into Python applications.
 
 import requests
 import logging
+import os
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime
 
 logger = logging.getLogger("memk.sdk")
 
-DEFAULT_DAEMON_URL = "http://localhost:8734"
+DEFAULT_DAEMON_URL = os.getenv("MEMK_DAEMON_URL", "http://127.0.0.1:15301")
 
 
 @dataclass
@@ -67,7 +68,7 @@ class MemoryKernel:
         Initialize MemoryKernel client.
         
         Args:
-            daemon_url: URL of the memk daemon (default: http://localhost:8734)
+            daemon_url: URL of the memk daemon (default: http://127.0.0.1:15301)
             workspace_id: Workspace ID (auto-detected if not provided)
             auto_start_daemon: Attempt to start daemon if not running
         """

@@ -30,7 +30,7 @@ def test_merkle_oplog_and_bucket():
         mem_id = db.insert_memory("Test sync payload")
         
         # Verify oplog was created correctly via automatic hook
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             oplogs = conn.execute("SELECT * FROM oplog").fetchall()
             assert len(oplogs) == 1
             op = oplogs[0]
@@ -56,7 +56,7 @@ def test_merkle_oplog_and_bucket():
         assert empty_count == 15
         
         # Ensure it got written to DB properly
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             mb = conn.execute("SELECT * FROM merkle_bucket").fetchall()
             assert len(mb) == 16
 

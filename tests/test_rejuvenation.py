@@ -30,13 +30,13 @@ def test_memory_rejuvenation_state_machine():
         mem_id = db.insert_memory("Test old memory", importance=0.5)
         
         # Verify initial state ACTIVE (0)
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             row = conn.execute("SELECT archived FROM memories WHERE id = ?", (mem_id,)).fetchone()
             assert row["archived"] == 0
             
         # Simulate Consolidator action -> ARCHIVED (1)
         db.archive_memory(mem_id)
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             row = conn.execute("SELECT archived FROM memories WHERE id = ?", (mem_id,)).fetchone()
             assert row["archived"] == 1
             
@@ -44,7 +44,7 @@ def test_memory_rejuvenation_state_machine():
         rejuv = MemoryRejuvenator(runtime, access_threshold=3)
         
         rejuv.evaluate_memory_access(mem_id) # hit 1
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             row = conn.execute("SELECT archived, access_count FROM memories WHERE id = ?", (mem_id,)).fetchone()
             assert row["archived"] == 1 # still archived!
             assert row["access_count"] == 1
@@ -53,7 +53,7 @@ def test_memory_rejuvenation_state_machine():
         revived = rejuv.evaluate_memory_access(mem_id) # hit 3
         
         assert revived is True
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             row = conn.execute("SELECT archived, access_count FROM memories WHERE id = ?", (mem_id,)).fetchone()
             assert row["archived"] == 0 # BACK TO ACTIVE!
             assert row["access_count"] == 3
@@ -65,7 +65,7 @@ def test_memory_rejuvenation_state_machine():
         recon_flag = rejuv.flag_for_reconsolidation(mem_id, reason="mismatched polarities spotted by agent")
         assert recon_flag is True
         
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             row = conn.execute("SELECT archived, importance FROM memories WHERE id = ?", (mem_id,)).fetchone()
             assert row["archived"] == 0 # ACTIVE pool!
             assert row["importance"] >= 0.8 # Promoted!

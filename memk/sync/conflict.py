@@ -26,7 +26,7 @@ import json
 import uuid
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
 from memk.storage.db import MemoryDB, DatabaseError
@@ -81,13 +81,13 @@ class ConflictRepository:
         conflict_id : str  — UUID of the newly created record.
         """
         conflict_id = str(uuid.uuid4())
-        detected_ts = datetime.utcnow().isoformat()
+        detected_ts = datetime.now(timezone.utc).isoformat()
 
         local_snap = _safe_json(local_payload)
         remote_snap = _safe_json(remote_payload)
 
         try:
-            with self.db._get_connection() as conn:
+            with self.db.connection() as conn:
                 conn.execute(
                     """
                     INSERT INTO conflict_record
@@ -117,7 +117,7 @@ class ConflictRepository:
     ) -> List[Dict[str, Any]]:
         """Return all unresolved conflict records, optionally filtered by table."""
         try:
-            with self.db._get_connection() as conn:
+            with self.db.connection() as conn:
                 if table_name:
                     rows = conn.execute(
                         """
@@ -142,7 +142,7 @@ class ConflictRepository:
     def get_conflict_by_id(self, conflict_id: str) -> Optional[Dict[str, Any]]:
         """Fetch a single conflict by its ID."""
         try:
-            with self.db._get_connection() as conn:
+            with self.db.connection() as conn:
                 row = conn.execute(
                     "SELECT * FROM conflict_record WHERE conflict_id = ?",
                     (conflict_id,),
@@ -156,7 +156,7 @@ class ConflictRepository:
     ) -> List[Dict[str, Any]]:
         """All conflicts (any status) that involve a specific entity."""
         try:
-            with self.db._get_connection() as conn:
+            with self.db.connection() as conn:
                 rows = conn.execute(
                     """
                     SELECT * FROM conflict_record
@@ -193,7 +193,7 @@ class ConflictRepository:
         True if a row was actually updated, False if conflict_id not found.
         """
         try:
-            with self.db._get_connection() as conn:
+            with self.db.connection() as conn:
                 cur = conn.execute(
                     """
                     UPDATE conflict_record
@@ -209,7 +209,7 @@ class ConflictRepository:
     def mark_conflict_ignored(self, conflict_id: str) -> bool:
         """Mark a conflict as intentionally ignored."""
         try:
-            with self.db._get_connection() as conn:
+            with self.db.connection() as conn:
                 cur = conn.execute(
                     """
                     UPDATE conflict_record

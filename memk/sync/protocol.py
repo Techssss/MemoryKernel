@@ -27,7 +27,7 @@ class SyncProtocolNode:
         
     def get_bucket_hashes(self, scope: str = None) -> Dict[int, str]:
         """Fetch current known bucket hashes."""
-        with self.db._get_connection() as conn:
+        with self.db.connection() as conn:
             rows = conn.execute("SELECT bucket_id, hash_val FROM merkle_bucket").fetchall()
             return {r["bucket_id"]: r["hash_val"] for r in rows}
             
@@ -53,7 +53,7 @@ class SyncProtocolNode:
         if not bucket_ids:
             return deltas
             
-        with self.db._get_connection() as conn:
+        with self.db.connection() as conn:
             # Fetch only IDs that fall into the mismatched buckets
             indices_str = ",".join(map(str, bucket_ids))
             
@@ -112,7 +112,7 @@ class SyncProtocolNode:
             from memk.sync.conflict import ConflictDetector, ConflictRepository
             conflict_repo = ConflictRepository(self.db)
 
-        with self.db._get_connection() as conn:
+        with self.db.connection() as conn:
             for d in remote_deltas:
                 tbl = d["table"]
                 data = d["payload"]
@@ -214,8 +214,8 @@ class SyncProtocolNode:
                             c_seq = d["payload"].get("version_seq", 0)
                 
                 if c_hlc > 0:
-                    from datetime import datetime
-                    now_ts = datetime.utcnow().isoformat()
+                    from datetime import datetime, timezone
+                    now_ts = datetime.now(timezone.utc).isoformat()
                     # Use monotonic update helper logic directly
                     conn.execute(
                         """

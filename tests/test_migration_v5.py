@@ -14,7 +14,7 @@ import sys
 import sqlite3
 import tempfile
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Ensure memk package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -28,7 +28,7 @@ from memk.storage.migrations import (
 
 
 def _utcnow() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%f")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")
 
 
 def _make_temp_db() -> str:

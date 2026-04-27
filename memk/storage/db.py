@@ -22,9 +22,10 @@ import sqlite3
 import uuid
 import logging
 import json
+from contextlib import contextmanager
 from pathlib import Path
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterator, List, Optional
 
 import numpy as np
 
@@ -69,6 +70,22 @@ class MemoryDB:
         except sqlite3.Error as e:
             logger.error(f"DB connect failed [{self.db_path}]: {e}")
             raise DatabaseError(f"Connection failed: {e}") from e
+
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        """
+        Yield a configured connection and always close it on exit.
+
+        sqlite3.Connection's native context manager manages transactions only;
+        it does not close the file handle. Keeping this lifecycle explicit avoids
+        locked database files on Windows, especially in tempfile-backed tests.
+        """
+        conn = self._get_connection()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     # ------------------------------------------------------------------
     # Schema
@@ -140,7 +157,7 @@ class MemoryDB:
         """
 
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(create_memories)
                 conn.execute(create_facts)
                 conn.execute(create_decisions)
@@ -190,7 +207,7 @@ class MemoryDB:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(sql, (
                     mem_id, content.strip(), blob,
                     float(importance), float(confidence), created_at,
@@ -215,7 +232,7 @@ class MemoryDB:
         """Fully update memory content and bump sync version."""
         hlc, node, seq = GLOBAL_HLC.next_version()
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     "UPDATE memories SET content = ?, version_hlc = ?, version_node = ?, version_seq = ? WHERE id = ?",
                     (content.strip(), hlc, node, seq, mem_id)
@@ -227,7 +244,7 @@ class MemoryDB:
     def update_memory_embedding(self, mem_id: str, embedding: np.ndarray) -> None:
         """Backfill / refresh the stored embedding for a memory row."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     "UPDATE memories SET embedding = ? WHERE id = ?",
                     (_encode_blob(embedding), mem_id),
@@ -241,7 +258,7 @@ class MemoryDB:
         Called by retrievers after surfacing a memory to the user/agent.
         """
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     """
                     UPDATE memories
@@ -257,7 +274,7 @@ class MemoryDB:
     def update_memory_heat(self, mem_id: str, heat_tier: int) -> None:
         """Update heat tier (for sharding/cache purging routines)."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     "UPDATE memories SET heat_tier = ? WHERE id = ?",
                     (heat_tier, mem_id)
@@ -268,7 +285,7 @@ class MemoryDB:
     def update_memory_centroid(self, mem_id: str, centroid_id: str) -> None:
         """Assign specific centroid to memory for vector partitioned retrieval."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     "UPDATE memories SET centroid_id = ? WHERE id = ?",
                     (centroid_id, mem_id)
@@ -280,7 +297,7 @@ class MemoryDB:
         """Mark memory as archived (soft-delete / consolidated)."""
         hlc, node, seq = GLOBAL_HLC.next_version()
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     "UPDATE memories SET archived = 1, version_hlc = ?, version_node = ?, version_seq = ? WHERE id = ?", 
                     (hlc, node, seq, mem_id)
@@ -293,7 +310,7 @@ class MemoryDB:
         """Mark an archived memory as active again (rejuvenation)."""
         hlc, node, seq = GLOBAL_HLC.next_version()
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     "UPDATE memories SET archived = 0, version_hlc = ?, version_node = ?, version_seq = ? WHERE id = ?", 
                     (hlc, node, seq, mem_id)
@@ -343,7 +360,7 @@ class MemoryDB:
             ORDER BY created_at DESC
         """
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 return [_to_dict(r) for r in conn.execute(sql, (f"%{keyword}%",)).fetchall()]
         except sqlite3.Error as e:
             raise DatabaseError(f"search_memory failed: {e}") from e
@@ -351,7 +368,7 @@ class MemoryDB:
     def stream_all_memories(self):
         """Yield memory rows one by one to avoid large memory overhead."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 cursor = conn.execute("SELECT * FROM memories ORDER BY created_at DESC")
                 while True:
                     rows = cursor.fetchmany(1000)
@@ -369,7 +386,7 @@ class MemoryDB:
     def get_memory_by_id(self, mem_id: str) -> Optional[Dict[str, Any]]:
         """Fetch a specific memory by ID."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 row = conn.execute("SELECT * FROM memories WHERE id = ?", (mem_id,)).fetchone()
                 return _to_dict(row) if row else None
         except sqlite3.Error as e:
@@ -378,7 +395,7 @@ class MemoryDB:
     def get_memories_without_embedding(self) -> List[Dict[str, Any]]:
         """Return rows that lack an embedding (for async backfill jobs)."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 return [_to_dict(r) for r in conn.execute(
                     "SELECT id, content FROM memories WHERE embedding IS NULL"
                 ).fetchall()]
@@ -391,7 +408,7 @@ class MemoryDB:
         Used by `memk doctor` for a cold-start ranking without a query.
         """
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 return [_to_dict(r) for r in conn.execute(
                     """
                     SELECT * FROM memories
@@ -435,25 +452,49 @@ class MemoryDB:
         created_at = _utcnow()
         blob = _encode_blob(embedding) if embedding is not None else None
 
-        reconcile = """
-            UPDATE facts SET is_active = 0
+        find_previous = """
+            SELECT id FROM facts
             WHERE subject = ? AND predicate = ? AND is_active = 1
+        """
+        reconcile = """
+            UPDATE facts
+            SET is_active = 0,
+                version_hlc = ?,
+                version_node = ?,
+                version_seq = ?
+            WHERE id = ?
         """
         insert = """
             INSERT INTO facts
                 (id, subject, predicate, object, confidence, importance,
-                 embedding, created_at, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                 embedding, created_at, is_active,
+                 version_hlc, version_node, version_seq)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
         """
         try:
-            with self._get_connection() as conn:
-                conn.execute(reconcile, (subject.strip(), predicate.strip()))
+            with self.connection() as conn:
+                previous = conn.execute(
+                    find_previous,
+                    (subject.strip(), predicate.strip()),
+                ).fetchall()
+                for row in previous:
+                    hlc, node, seq = GLOBAL_HLC.next_version()
+                    conn.execute(reconcile, (hlc, node, seq, row["id"]))
+                    self._log_sync_operation(
+                        conn, "facts", row["id"], "UPDATE", {}, (hlc, node, seq)
+                    )
+
+                hlc, node, seq = GLOBAL_HLC.next_version()
                 conn.execute(insert, (
                     fact_id,
                     subject.strip(), predicate.strip(), obj.strip(),
                     float(confidence), float(importance),
                     blob, created_at,
+                    hlc, node, seq,
                 ))
+                self._log_sync_operation(
+                    conn, "facts", fact_id, "INSERT", {}, (hlc, node, seq)
+                )
             return fact_id
         except sqlite3.Error as e:
             logger.error(f"insert_fact failed: {e}")
@@ -462,7 +503,7 @@ class MemoryDB:
     def update_fact_embedding(self, fact_id: str, embedding: np.ndarray) -> None:
         """Backfill / refresh the stored embedding for a fact row."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     "UPDATE facts SET embedding = ? WHERE id = ?",
                     (_encode_blob(embedding), fact_id),
@@ -473,7 +514,7 @@ class MemoryDB:
     def touch_fact(self, fact_id: str) -> None:
         """Increment access_count and refresh last_accessed_at for a fact."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     """
                     UPDATE facts
@@ -510,7 +551,7 @@ class MemoryDB:
         sql += " ORDER BY created_at DESC"
 
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 return [_to_dict(r) for r in conn.execute(sql, params).fetchall()]
         except sqlite3.Error as e:
             raise DatabaseError(f"search_facts failed: {e}") from e
@@ -519,7 +560,7 @@ class MemoryDB:
         """Yield active facts for large-scale hydration."""
         sql = "SELECT * FROM facts WHERE is_active = 1"
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 cursor = conn.execute(sql)
                 while True:
                     rows = cursor.fetchmany(1000)
@@ -537,7 +578,7 @@ class MemoryDB:
     def get_facts_without_embedding(self) -> List[Dict[str, Any]]:
         """Return active facts that lack an embedding."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 return [_to_dict(r) for r in conn.execute(
                     """
                     SELECT id, subject, predicate, object
@@ -551,7 +592,7 @@ class MemoryDB:
     def get_top_facts_by_metadata(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Active facts ranked by priority metadata (for cold doctor report)."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 return [_to_dict(r) for r in conn.execute(
                     """
                     SELECT * FROM facts
@@ -583,7 +624,7 @@ class MemoryDB:
             ORDER BY f.created_at DESC
         """
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 return [_to_dict(r) for r in conn.execute(sql, active_fact_ids).fetchall()]
         except sqlite3.Error as e:
             raise DatabaseError(f"get_fact_conflicts failed: {e}") from e
@@ -591,7 +632,7 @@ class MemoryDB:
     def get_all_subjects(self) -> List[str]:
         """Return a unique list of subjects from all active facts."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 rows = conn.execute(
                     "SELECT DISTINCT subject FROM facts WHERE is_active = 1"
                 ).fetchall()
@@ -606,7 +647,7 @@ class MemoryDB:
         """
         updated = 0
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 # 1. Update Memories
                 rows = conn.execute("SELECT id, importance, access_count, created_at FROM memories").fetchall()
                 for r in rows:
@@ -629,7 +670,7 @@ class MemoryDB:
     def prune_cold_memories(self, threshold: float) -> int:
         """Delete memories and inactive facts scoring below the threshold."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 # We typically don't delete active facts unless they are really irrelevant,
                 # but raw memories can be pruned safely.
                 c1 = conn.execute("DELETE FROM memories WHERE decay_score < ?", (threshold,)).rowcount
@@ -643,7 +684,7 @@ class MemoryDB:
     def get_state_counts(self, cold_th: float, warm_th: float) -> Dict[str, int]:
         """Group all items into hot/warm/cold counts."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 sql = """
                     SELECT 
                         SUM(CASE WHEN decay_score >= ? THEN 1 ELSE 0 END) as hot,
@@ -674,7 +715,7 @@ class MemoryDB:
             VALUES (?, ?, ?, ?, ?)
         """
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(sql, (
                     decision_id, action, reason,
                     json.dumps(used_fact_ids or []),
@@ -693,7 +734,7 @@ class MemoryDB:
         job_id = str(uuid.uuid4())[:8]
         now = _utcnow()
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     "INSERT INTO background_jobs (id, job_type, status, created_at) VALUES (?, ?, ?, ?)",
                     (job_id, job_type, status, now)
@@ -706,7 +747,7 @@ class MemoryDB:
         """Mark a job as completed and store its result JSON."""
         now = _utcnow()
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     "UPDATE background_jobs SET status = 'completed', completed_at = ?, result = ? WHERE id = ?",
                     (now, json.dumps(result), job_id)
@@ -727,7 +768,7 @@ class MemoryDB:
         Delete oplog entries older than boundary_hlc (strictly less than).
         """
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 if dry_run:
                     cnt = conn.execute(
                         "SELECT COUNT(*) as c FROM oplog WHERE version_hlc < ?",
@@ -752,17 +793,19 @@ class MemoryDB:
 
     def get_oplog_range(self) -> Dict[str, Optional[int]]:
         """Return the min and max version_hlc currently available in the oplog."""
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             row = conn.execute("SELECT MIN(version_hlc) as min_hlc, MAX(version_hlc) as max_hlc FROM oplog").fetchone()
             return {"min": row["min_hlc"], "max": row["max_hlc"]}
 
     def get_latest_version_hlc(self) -> int:
         """Get the absolute latest HLC version seen by this node across all tables."""
-        with self._get_connection() as conn:
-            # Check memories and facts for the latest version
+        with self.connection() as conn:
+            # Check semantic tables and sync metadata for the latest version.
             m_max = conn.execute("SELECT MAX(version_hlc) FROM memories").fetchone()[0] or 0
-            f_max = conn.execute("SELECT MAX(version_hlc) FROM row_hash").fetchone()[0] or 0
-            return max(m_max, f_max)
+            fact_max = conn.execute("SELECT MAX(version_hlc) FROM facts").fetchone()[0] or 0
+            kg_max = conn.execute("SELECT MAX(version_hlc) FROM kg_fact").fetchone()[0] or 0
+            hash_max = conn.execute("SELECT MAX(version_hlc) FROM row_hash").fetchone()[0] or 0
+            return max(m_max, fact_max, kg_max, hash_max)
 
     def upsert_replica_checkpoint(
         self, replica_id: str, hlc: int, node: str, seq: int, note: Optional[str] = None
@@ -771,7 +814,7 @@ class MemoryDB:
         Record or blindly update a synchronized replica's watermark.
         """
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     """
                     INSERT INTO replica_checkpoint (replica_id, last_applied_hlc, last_applied_node, last_applied_seq, updated_ts, note)
@@ -790,12 +833,12 @@ class MemoryDB:
             raise DatabaseError(f"upsert_replica_checkpoint failed: {e}") from e
 
     def get_replica_checkpoint(self, replica_id: str) -> Optional[Dict[str, Any]]:
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             row = conn.execute("SELECT * FROM replica_checkpoint WHERE replica_id = ?", (replica_id,)).fetchone()
             return dict(row) if row else None
 
     def list_replica_checkpoints(self) -> List[Dict[str, Any]]:
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             rows = conn.execute("SELECT * FROM replica_checkpoint ORDER BY updated_ts DESC").fetchall()
             return [dict(r) for r in rows]
 
@@ -804,7 +847,7 @@ class MemoryDB:
         Calculate the lowest synced cursor threshold across all recorded replica branches locally.
         Used primarily by Garbage Collection daemons to identify safe prune boundaries for oplogs.
         """
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             row = conn.execute("SELECT MIN(last_applied_hlc) as min_hlc FROM replica_checkpoint").fetchone()
             if row and row["min_hlc"] is not None:
                 return int(row["min_hlc"])
@@ -813,7 +856,7 @@ class MemoryDB:
     def get_stats(self) -> Dict[str, Any]:
         """Aggregate statistics for `memk doctor` with production metrics."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 def scalar(q: str) -> int:
                     return conn.execute(q).fetchone()[0]
 
@@ -852,7 +895,7 @@ class MemoryDB:
         Returns a list of dicts: {table, row_id, payload}.
         """
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 # Get unique modified rows from oplog since HLC
                 rows = conn.execute(
                     """
@@ -893,7 +936,7 @@ class MemoryDB:
 
 def _utcnow() -> str:
     """Current UTC time as ISO 8601 string with microseconds."""
-    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%f")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")
 
 
 def _encode_blob(vec: np.ndarray) -> bytes:
@@ -925,4 +968,3 @@ def _most_accessed(conn: sqlite3.Connection, table: str) -> Optional[str]:
         return row[0] if row else None
     except Exception:
         return None
-

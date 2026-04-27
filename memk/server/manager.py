@@ -1,6 +1,7 @@
 import os
 import signal
 import subprocess
+import sys
 import time
 import requests
 import logging
@@ -21,7 +22,7 @@ def start():
     
     # Run uvicorn in a separate process
     process = subprocess.Popen(
-        ["python", "-m", "uvicorn", "memk.server.daemon:app", "--port", str(PORT), "--host", "127.0.0.1", "--no-access-log"],
+        [sys.executable, "-m", "uvicorn", "memk.server.daemon:app", "--port", str(PORT), "--host", "127.0.0.1", "--no-access-log"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
@@ -79,7 +80,7 @@ def get_status():
     if is_running():
         try:
             resp = requests.get(f"{URL}/health").json()
-            return f"RUNNING (v{resp.get('engine', 'unknown')})"
+            return f"RUNNING (v{resp.get('version', resp.get('engine', 'unknown'))})"
         except:
             return "RUNNING (unresponsive)"
     return "STOPPED"

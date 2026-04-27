@@ -27,7 +27,7 @@ def repo():
 
 def test_schema_migration_creates_table(repo):
     """Confirm that init_db (auto_migrate) created the conflict_record table."""
-    with repo.db._get_connection() as conn:
+    with repo.db.connection() as conn:
         tables = {
             r[0]
             for r in conn.execute(
@@ -39,7 +39,7 @@ def test_schema_migration_creates_table(repo):
 
 def test_schema_indexes_exist(repo):
     """Verify the status and row lookup indexes were created."""
-    with repo.db._get_connection() as conn:
+    with repo.db.connection() as conn:
         indexes = {
             r[0]
             for r in conn.execute(

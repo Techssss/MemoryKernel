@@ -6,7 +6,7 @@ Public API request/response models for v1.
 
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 # ---------------------------------------------------------------------------
@@ -20,7 +20,7 @@ class APIMetadata(BaseModel):
     cache_hit: bool = False
     degraded: bool = False
     stale_warning: Optional[str] = None
-    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class APIResponse(BaseModel):

@@ -3,6 +3,7 @@ import statistics
 import requests
 import json
 import logging
+import asyncio
 from typing import List, Dict, Any, Callable
 from rich.console import Console
 from rich.table import Table
@@ -88,37 +89,36 @@ def run_benchmarks(service_mode: bool = True):
 
     else:
         # Standalone Service Mode (Direct call overhead)
-        service = MemoryKernelService()
-        service.ensure_initialized()
+        service = MemoryKernelService(allow_direct_writes=True)
         
-        suite.run_op("Service: Search (Direct)", lambda: service.search(f"bench_{time.time()}"))
-        suite.run_op("Service: Add (Direct)", lambda: service.add_memory(f"Direct memory {time.time()}"))
+        suite.run_op("Service: Search (Direct)", lambda: asyncio.run(service.search(f"bench_{time.time()}")))
+        suite.run_op("Service: Add (Direct)", lambda: asyncio.run(service.add_memory(f"Direct memory {time.time()}")))
 
     suite.report()
 
 def profile_breakdown():
     """Deep dive into a single request lifecycle."""
-    service = MemoryKernelService()
-    service.ensure_initialized()
+    service = MemoryKernelService(allow_direct_writes=True)
+    runtime = service._get_runtime("default")
     query = "performance profile query"
     
     console.print("\n[bold]🔍 Hot-Path Latency Breakdown[/bold]")
     
     # 1. Embed time
     start = time.perf_counter()
-    service.runtime.embedder.embed(query)
+    service.global_runtime.shared_embedder.embed(query)
     embed_ms = (time.perf_counter() - start) * 1000
     
     # 2. Vector search time (RAM)
-    q_vec = service.runtime.embedder.embed(query)
+    q_vec = service.global_runtime.shared_embedder.embed(query)
     start = time.perf_counter()
-    results = service.runtime.index.search(q_vec, top_k=10)
+    results = runtime.index.search(q_vec, top_k=10)
     search_ms = (time.perf_counter() - start) * 1000
     
     # 3. Context building
-    items = service.runtime.retriever.retrieve(query)
+    items = runtime.retriever.retrieve(query)
     start = time.perf_counter()
-    service.runtime.builder.build_context(items)
+    runtime.builder.build_context(items)
     assembly_ms = (time.perf_counter() - start) * 1000
     
     table = Table()

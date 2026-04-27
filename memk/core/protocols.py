@@ -121,6 +121,10 @@ class IndexProtocol(Protocol):
     def add_entry(self, entry: Any, vector: np.ndarray) -> None:
         """Add an entry with its vector."""
         ...
+
+    def bulk_add_entries(self, entries: List[Any], vectors: List[np.ndarray]) -> None:
+        """Add many entries and vectors in one operation."""
+        ...
     
     def search(self, query_vec: np.ndarray, top_k: int = 10) -> List[Tuple[Any, float]]:
         """Search for similar vectors."""
@@ -171,7 +175,8 @@ class RetrieverProtocol(Protocol):
         query: str,
         q_vec: np.ndarray,
         index_hits: List[Tuple],
-        limit: int
+        limit: int,
+        graph_index: Optional[Any] = None,
     ) -> List[Any]:
         """Rank candidate items."""
         ...
@@ -212,7 +217,7 @@ class ExtractorProtocol(Protocol):
 class JobManagerProtocol(Protocol):
     """Protocol for background job managers."""
     
-    def submit(self, job_type: str, task_fn) -> str:
+    def submit(self, job_type: str, task_fn, *args: Any, **kwargs: Any) -> str:
         """Submit a background job."""
         ...
     

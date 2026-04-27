@@ -4,21 +4,62 @@ version = "0.1.0"
 description = "Local-first memory infrastructure library for AI agents."
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
 dependencies = [
-    "typer>=0.9.0",
-    "pydantic>=2.0.0",
-    "tiktoken>=0.7.0",
-    "rich>=13.0.0",
     "numpy>=1.24.0",
-    "scikit-learn>=1.3.0",
     "sentence-transformers>=2.7.0",
+    "torch>=2.0.0",
     "fastapi>=0.100.0",
     "uvicorn>=0.22.0",
-    "requests>=2.31.0"
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "watchdog>=3.0.0",
+    "gitpython>=3.1.0",
+    "requests>=2.31.0",
+    "httpx>=0.24.0",
+    "psutil>=5.9.0",
+    "python-dotenv>=1.0.0",
+    "scikit-learn>=1.3.0",
+    "spacy>=3.7.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0"
 ]
 
 [project.scripts]
 memk = "memk.cli.main:app"
+
+[project.urls]
+Homepage = "https://github.com/Techssss/MemoryKernel"
+Repository = "https://github.com/Techssss/MemoryKernel"
+Issues = "https://github.com/Techssss/MemoryKernel/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["memk"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/memk",
+    "/tests",
+    "/bench",
+    "/examples",
+    "/docs",
+    "/sdk/nodejs",
+    "/README.md",
+    "/TESTING_GUIDE.md",
+    "/LICENSE",
+    "/pyproject.toml",
+    "/requirements.txt",
+    "/setup.py",
+]
 
 [build-system]
 requires = ["hatchling"]

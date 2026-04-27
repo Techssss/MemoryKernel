@@ -22,6 +22,8 @@ Architecture:
 from __future__ import annotations
 
 import logging
+import hashlib
+import re
 import struct
 import time
 import threading
@@ -408,6 +410,43 @@ class TFIDFEmbedder(BaseEmbedder):
         return results
 
 
+class HashingEmbedder(BaseEmbedder):
+    """Zero-dependency deterministic fallback embedder.
+
+    It preserves the embedding contract when optional model dependencies are
+    unavailable. Quality is lower than sentence-transformers, but reads and
+    tests can still run offline.
+    """
+
+    def __init__(self, dim: int = 128):
+        self._dim = dim
+
+    @property
+    def dim(self) -> int:
+        return self._dim
+
+    def embed(self, text: str) -> np.ndarray:
+        vec = np.zeros(self._dim, dtype=np.float32)
+        tokens = re.findall(r"[a-z0-9]+", text.lower())
+        if not tokens:
+            return vec
+
+        for token in tokens:
+            digest = hashlib.sha256(token.encode("utf-8")).digest()
+            for offset in range(0, 16, 4):
+                raw = int.from_bytes(digest[offset:offset + 4], "little")
+                idx = raw % self._dim
+                vec[idx] += 1.0 if raw & 1 else -1.0
+
+        norm = np.linalg.norm(vec)
+        if norm > 1e-10:
+            vec /= norm
+        return vec
+
+    def embed_batch(self, texts: List[str]) -> List[np.ndarray]:
+        return [self.embed(text) for text in texts]
+
+
 # ---------------------------------------------------------------------------
 # EmbeddingPipeline — the main orchestrator
 # ---------------------------------------------------------------------------
@@ -640,16 +679,27 @@ _DEFAULT_PIPELINE: Optional[EmbeddingPipeline] = None
 def get_default_embedder() -> BaseEmbedder:
     """
     Lazy singleton factory.
-    Tries sentence-transformers first; falls back to TF-IDF.
+    Tries sentence-transformers first, then TF-IDF, then hashing.
     """
     global _DEFAULT_EMBEDDER
     if _DEFAULT_EMBEDDER is None:
         try:
             _DEFAULT_EMBEDDER = SentenceTransformerEmbedder()
             logger.info("Using SentenceTransformerEmbedder (all-MiniLM-L6-v2)")
-        except ImportError:
-            logger.warning("sentence-transformers not found. Falling back to TFIDFEmbedder.")
-            _DEFAULT_EMBEDDER = TFIDFEmbedder()
+        except Exception as exc:
+            logger.warning(
+                "SentenceTransformerEmbedder unavailable (%s). Falling back to TFIDFEmbedder.",
+                exc,
+            )
+            try:
+                _DEFAULT_EMBEDDER = TFIDFEmbedder()
+                logger.info("Using TFIDFEmbedder fallback")
+            except Exception as tfidf_exc:
+                logger.warning(
+                    "TFIDFEmbedder unavailable (%s). Falling back to HashingEmbedder.",
+                    tfidf_exc,
+                )
+                _DEFAULT_EMBEDDER = HashingEmbedder()
     return _DEFAULT_EMBEDDER
 
 

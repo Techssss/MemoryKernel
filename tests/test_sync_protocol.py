@@ -81,7 +81,7 @@ def test_sync_two_replicas():
         assert node_a.get_root_hash() == node_b.get_root_hash()
         
         # Check Node B actually has the rows in DB
-        with rt_B.db._get_connection() as conn:
+        with rt_B.db.connection() as conn:
             cnt = conn.execute("SELECT COUNT(*) as c FROM memories").fetchone()["c"]
             assert cnt == 2
             

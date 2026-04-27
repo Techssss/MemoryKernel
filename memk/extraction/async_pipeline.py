@@ -48,12 +48,16 @@ def enhanced_extraction_job(
             repo = runtime.graph_repo
             
             if repo and entities:
+                changed = False
                 for ent in entities:
                     score = ent.get("score", 0.0)
                     if score >= 0.5:
                         e_id = repo.upsert_entity(workspace_id, ent["text"], confidence=score)
                         repo.add_mention(memory_id, e_id, role_hint=ent["label"])
+                        changed = True
                         logger.debug(f"[{workspace_id}] Async Pipeline added GLiNER Entity: {ent['text']} ({ent['label']})")
+                if changed:
+                    runtime.refresh_graph_index()
             
             if progress_callback:
                 progress_callback(1.0)

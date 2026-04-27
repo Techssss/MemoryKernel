@@ -21,7 +21,7 @@ _service_instance = None
 def get_service() -> MemoryKernelService:
     global _service_instance
     if _service_instance is None:
-        _service_instance = MemoryKernelService()
+        _service_instance = MemoryKernelService(allow_direct_writes=True)
     return _service_instance
 
 def get_workspace_id() -> str:
@@ -34,6 +34,25 @@ def get_workspace_id() -> str:
     except:
         pass
     return "default"
+
+def _add_memory(content: str, importance: float, confidence: float, workspace: Optional[str]) -> None:
+    """Shared implementation for memory write commands."""
+    workspace_id = workspace or get_workspace_id()
+    try:
+        if is_running():
+            resp = requests.post(f"{URL}/add", json={
+                "content": content, "importance": importance, "confidence": confidence, "workspace_id": workspace_id
+            }).json()
+            console.print(f"[green]Added via Daemon![/green] ID: [cyan]{resp['id'][:8]}...[/cyan] (WS: {workspace_id[:8]}...)")
+            return
+
+        service = get_service()
+        import asyncio
+        res = asyncio.run(service.add_memory(content, importance, confidence, workspace_id))
+        console.print(f"[green]Added memory successfully![/green] ID: [cyan]{res['id'][:8]}...[/cyan]")
+    except Exception as e:
+        console.print(f"[bold red]Failed to add memory:[/bold red] {e}")
+        raise typer.Exit(code=1)
 
 # --- Lifecycle Commands ---
 
@@ -106,23 +125,17 @@ def add(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")
 ):
     """Add a new memory fact (Write-Time Embedding)."""
-    workspace_id = workspace or get_workspace_id()
-    try:
-        if is_running():
-            resp = requests.post(f"{URL}/add", json={
-                "content": content, "importance": importance, "confidence": confidence, "workspace_id": workspace_id
-            }).json()
-            console.print(f"[green]Added via Daemon![/green] ID: [cyan]{resp['id'][:8]}...[/cyan] (WS: {workspace_id[:8]}...)")
-            return
+    _add_memory(content, importance, confidence, workspace)
 
-        service = get_service()
-        # Note: add_memory is async in service, but CLI is sync for now.
-        import asyncio
-        res = asyncio.run(service.add_memory(content, importance, confidence, workspace_id))
-        console.print(f"[green]Added memory successfully![/green] ID: [cyan]{res['id'][:8]}...[/cyan]")
-    except Exception as e:
-        console.print(f"[bold red]Failed to add memory:[/bold red] {e}")
-        raise typer.Exit(code=1)
+@app.command("remember")
+def remember(
+    content: str,
+    importance: float = typer.Option(0.5, "--importance", "-i", min=0, max=1, help="Priority of this memory."),
+    confidence: float = typer.Option(1.0, "--confidence", "-c", min=0, max=1, help="Certainty of this memory."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")
+):
+    """Alias for `memk add`."""
+    _add_memory(content, importance, confidence, workspace)
 
 @app.command()
 def search(
@@ -135,11 +148,12 @@ def search(
     try:
         if is_running():
             resp = requests.post(f"{URL}/search", json={"query": query, "limit": limit, "workspace_id": workspace_id}).json()
-            results = resp["results"]
+            results = resp.get("results", [])
         else:
             service = get_service()
             import asyncio
-            results = asyncio.run(service.search(query, limit, workspace_id))
+            resp = asyncio.run(service.search(query, limit, workspace_id))
+            results = resp.get("results", [])
 
         table = Table(title=f"Search Results for: '{query}'")
         table.add_column("Type", style="dim")
@@ -167,11 +181,12 @@ def context(
             resp = requests.post(f"{URL}/context", json={
                 "query": query, "max_chars": max_chars, "threshold": threshold, "workspace_id": workspace_id
             }).json()
-            ctx = resp["context"]
+            ctx = resp.get("context", "")
         else:
             service = get_service()
             import asyncio
-            ctx = asyncio.run(service.build_context(query, max_chars, threshold, workspace_id))
+            resp = asyncio.run(service.build_context(query, max_chars, threshold, workspace_id))
+            ctx = resp.get("context", "")
 
         console.print("\n[bold]Generated Context:[/bold]")
         console.print(f"[dim]{'-' * 40}[/dim]")
@@ -327,7 +342,8 @@ def synthesize_all():
 
         service = get_service()
         from memk.synthesis.synthesizer import KnowledgeSynthesizer
-        files = KnowledgeSynthesizer(service.runtime.db).synthesize_all()
+        runtime = service._get_runtime(get_workspace_id())
+        files = KnowledgeSynthesizer(runtime.db).synthesize_all()
         console.print(f"[green]Completed![/green] Synthesized {len(files)} topic(s).")
     except Exception as e:
         console.print(f"[bold red]Global synthesis failed:[/bold red] {e}")

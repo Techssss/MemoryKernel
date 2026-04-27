@@ -16,8 +16,9 @@ It is purely CRUD + query for entity, mention, edge, kg_fact tables.
 import sqlite3
 import uuid
 import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from memk.storage.graph_models import (
     EntityRecord,
@@ -44,7 +45,7 @@ class DatabaseError(Exception):
 
 def _utcnow() -> str:
     """Current UTC time as ISO 8601 string with microseconds."""
-    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%f")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")
 
 
 def _row_to_entity(row: sqlite3.Row) -> EntityRecord:
@@ -130,6 +131,21 @@ class GraphRepository:
             logger.error(f"Graph DB connect failed [{self.db_path}]: {e}")
             raise DatabaseError(f"Connection failed: {e}") from e
 
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        """
+        Yield a configured connection and close it after transaction handling.
+
+        The sqlite3 native context manager does not close connections, so this
+        wrapper prevents lingering file handles on Windows.
+        """
+        conn = self._get_connection()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
     # ------------------------------------------------------------------
     # Entity CRUD
     # ------------------------------------------------------------------
@@ -167,7 +183,7 @@ class GraphRepository:
         now = _utcnow()
 
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 # Check for existing entity
                 row = conn.execute(
                     """
@@ -221,7 +237,7 @@ class GraphRepository:
     def get_entity(self, entity_id: int) -> Optional[EntityRecord]:
         """Get a single entity by id."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 row = conn.execute(
                     "SELECT * FROM entity WHERE id = ?", (entity_id,)
                 ).fetchone()
@@ -238,7 +254,7 @@ class GraphRepository:
         """Find entity by normalized text lookup."""
         normalized = normalize_entity_text(text)
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 row = conn.execute(
                     """
                     SELECT * FROM entity
@@ -254,7 +270,7 @@ class GraphRepository:
     def get_all_entities(self, workspace_id: str) -> List[EntityRecord]:
         """Get all entities for a workspace."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 rows = conn.execute(
                     "SELECT * FROM entity WHERE workspace_id = ? ORDER BY id",
                     (workspace_id,),
@@ -293,7 +309,7 @@ class GraphRepository:
         weight     : Mention importance weight [0, 1].
         """
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO mention
@@ -325,7 +341,7 @@ class GraphRepository:
             ORDER BY m.weight DESC, e.confidence DESC
         """
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 rows = conn.execute(sql, (memory_id,)).fetchall()
                 return [_row_to_entity(r) for r in rows]
         except sqlite3.Error as e:
@@ -334,7 +350,7 @@ class GraphRepository:
     def get_mentions_for_memory(self, memory_id: str) -> List[MentionRecord]:
         """Get all mention records for a specific memory."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 rows = conn.execute(
                     "SELECT * FROM mention WHERE memory_id = ?", (memory_id,)
                 ).fetchall()
@@ -345,7 +361,7 @@ class GraphRepository:
     def get_memories_for_entity(self, entity_id: int) -> List[str]:
         """Get all memory IDs that mention a specific entity."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 rows = conn.execute(
                     "SELECT memory_id FROM mention WHERE entity_id = ?",
                     (entity_id,),
@@ -393,7 +409,7 @@ class GraphRepository:
 
         now = _utcnow()
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     """
                     INSERT INTO edge
@@ -437,7 +453,7 @@ class GraphRepository:
         sql += " ORDER BY weight DESC"
 
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 rows = conn.execute(sql, params).fetchall()
                 return [_row_to_edge(r) for r in rows]
         except sqlite3.Error as e:
@@ -461,7 +477,7 @@ class GraphRepository:
         sql += " ORDER BY weight DESC"
 
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 rows = conn.execute(sql, params).fetchall()
                 return [_row_to_edge(r) for r in rows]
         except sqlite3.Error as e:
@@ -481,7 +497,7 @@ class GraphRepository:
         sql += " ORDER BY id"
 
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 rows = conn.execute(sql, params).fetchall()
                 return [_row_to_edge(r) for r in rows]
         except sqlite3.Error as e:
@@ -490,7 +506,7 @@ class GraphRepository:
     def archive_edge(self, edge_id: int) -> None:
         """Soft-delete an edge by setting archived=1."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     "UPDATE edge SET archived = 1 WHERE id = ?", (edge_id,)
                 )
@@ -501,7 +517,7 @@ class GraphRepository:
     def get_edges_for_memory(self, memory_id: str) -> List[EdgeRecord]:
         """Get all edges that were extracted from a specific memory."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 rows = conn.execute(
                     """
                     SELECT * FROM edge
@@ -547,7 +563,7 @@ class GraphRepository:
         now = _utcnow()
 
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 conn.execute(
                     """
                     INSERT INTO kg_fact
@@ -572,7 +588,7 @@ class GraphRepository:
     ) -> List[KGFactRecord]:
         """Get consolidated facts for a workspace, newest first."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 rows = conn.execute(
                     """
                     SELECT * FROM kg_fact
@@ -593,7 +609,7 @@ class GraphRepository:
     def get_graph_stats(self, workspace_id: str) -> Dict[str, Any]:
         """Get summary counts for the graph sidecar tables."""
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 def scalar(sql):
                     return conn.execute(sql, (workspace_id,)).fetchone()[0]
 

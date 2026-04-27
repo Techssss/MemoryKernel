@@ -27,7 +27,7 @@ class ConsolidatorService:
             query += " AND (centroid_id = ? OR centroid_id IS NULL)"
             params.append(centroid_id)
             
-        with self.db._get_connection() as conn:
+        with self.db.connection() as conn:
             return [dict(r) for r in conn.execute(query, tuple(params)).fetchall()]
 
     def build_similarity_graph(self, candidates: List[Dict[str, Any]]) -> Dict[str, List[str]]:
@@ -131,7 +131,7 @@ class ConsolidatorService:
             f_id = f"fact_{uuid.uuid4().hex[:8]}"
             summary_json = json.dumps({"source_memories": cluster_ids, "method": "rule_based"})
             
-            with self.db._get_connection() as conn:
+            with self.db.connection() as conn:
                 conn.execute("""
                     INSERT INTO kg_fact (id, workspace_id, canonical_text, summary_json, confidence, created_ts)
                     VALUES (?, ?, ?, ?, ?, ?)

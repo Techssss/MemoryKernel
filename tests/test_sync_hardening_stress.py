@@ -160,7 +160,7 @@ def test_delta_sync_hardening_stress():
 
         logger.info("=== PHASE 3: Checkpoint and GC Safety ===")
         # Verify B has a valid checkpoint for A
-        with node_b.db._get_connection() as conn:
+        with node_b.db.connection() as conn:
             cp = conn.execute("SELECT * FROM replica_checkpoint WHERE replica_id = 'node_alpha'").fetchone()
             assert cp is not None
             b_last_hlc = cp["last_applied_hlc"]
@@ -168,7 +168,7 @@ def test_delta_sync_hardening_stress():
 
         # Simulate B sending checkpoint feedback to A
         # In a real system, this happens via a 'handshake' or 'ack' message.
-        with node_a.db._get_connection() as conn:
+        with node_a.db.connection() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO replica_checkpoint (replica_id, last_applied_hlc, last_applied_node, last_applied_seq, updated_ts) VALUES (?, ?, ?, ?, ?)",
                 ("node_beta", cp["last_applied_hlc"], cp["last_applied_node"], cp["last_applied_seq"], cp["updated_ts"])
@@ -178,14 +178,14 @@ def test_delta_sync_hardening_stress():
         # These MUST NOT be pruned even if they are old (though here they are new)
         node_a.add_memories(10)
         
-        with node_a.db._get_connection() as conn:
+        with node_a.db.connection() as conn:
             count_pre = conn.execute("SELECT COUNT(*) FROM oplog").fetchone()[0]
             
         # Run GC on A
         logger.info("Running Oplog GC on A...")
         node_a.run_gc()
         
-        with node_a.db._get_connection() as conn:
+        with node_a.db.connection() as conn:
             count_post = conn.execute("SELECT COUNT(*) FROM oplog").fetchone()[0]
             # Some items should be pruned (synced items)
             # The last 10 items (not yet synced) must remain in oplog.

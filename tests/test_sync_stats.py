@@ -51,7 +51,7 @@ def test_sync_stats_reporting():
         
         # 6. Simulate stale state
         # Delete row bypassing sync hooks
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             conn.execute("DELETE FROM memories WHERE id = ?", (mem_id,))
             
         stats = stats_service.get_sync_hardening_stats()

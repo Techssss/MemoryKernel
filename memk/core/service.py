@@ -38,9 +38,14 @@ class MemoryKernelService:
     v1.0: Multi-workspace support via RuntimeManager.
     """
 
-    def __init__(self, deadline_ms: float = DEADLINE_MS):
+    def __init__(
+        self,
+        deadline_ms: float = DEADLINE_MS,
+        allow_direct_writes: bool = False,
+    ):
         self.global_runtime = get_runtime()
         self.deadline_ms = deadline_ms
+        self.allow_direct_writes = allow_direct_writes
         self.collector = get_collector(slow_threshold_ms=SLOW_THRESHOLD_MS)
 
     def _get_runtime(self, workspace_id: str) -> WorkspaceRuntime:
@@ -51,7 +56,7 @@ class MemoryKernelService:
         Policy check: only the daemon (identified by a specific environment flag or context)
         is allowed to perform writes in v1.0 multi-workspace mode.
         """
-        if not os.getenv("MEMK_DAEMON_MODE"):
+        if not self.allow_direct_writes and not os.getenv("MEMK_DAEMON_MODE"):
             raise PermissionError(
                 "Direct write access to MemoryKernel storage is disabled in multi-workspace mode. "
                 "Please start the daemon using 'memk serve' and ensure it is running."
@@ -139,9 +144,11 @@ class MemoryKernelService:
                 if tc.elapsed_ms() < self.deadline_ms:
                     with tc.span("graph_extraction", fact_count=len(facts)):
                         try:
-                            self._enrich_graph(
+                            edges_created = self._enrich_graph(
                                 runtime, workspace_id, mem_id, facts,
                             )
+                            if edges_created:
+                                runtime.refresh_graph_index()
                         except Exception as e:
                             logger.warning(
                                 f"[{workspace_id}] Graph enrichment failed "
@@ -178,7 +185,7 @@ class MemoryKernelService:
         return {
             "id": mem_id,
             "extracted_facts": extracted,
-            "metadata": metadata.dict(),
+            "metadata": metadata.model_dump(),
         }
 
     # ------------------------------------------------------------------
@@ -312,7 +319,7 @@ class MemoryKernelService:
         
         return {
             "results": serialized,
-            "metadata": metadata.dict(),
+            "metadata": metadata.model_dump(),
         }
 
     # ------------------------------------------------------------------
@@ -394,7 +401,7 @@ class MemoryKernelService:
         
         return {
             "context": context_str,
-            "metadata": metadata.dict(),
+            "metadata": metadata.model_dump(),
         }
 
     # ------------------------------------------------------------------

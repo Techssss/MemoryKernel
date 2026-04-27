@@ -56,7 +56,7 @@ def test_consolidation_job():
         assert after_cands[0]["id"] == id_diff # Bob memory survives
         
         # 4. Check facts table
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             facts = conn.execute("SELECT * FROM kg_fact").fetchall()
             assert len(facts) == 1
             f = facts[0]

@@ -176,6 +176,13 @@ class DependencyContainer:
         # Extractor factory
         def extractor_factory(workspace_id: str) -> ExtractorProtocol:
             from memk.extraction.extractor import RuleBasedExtractor
+            try:
+                from memk.extraction.spacy_extractor import SpaCyExtractor
+                ext = SpaCyExtractor()
+                if ext._ensure_model():
+                    return ext
+            except ImportError:
+                pass
             return RuleBasedExtractor()
         
         # Job manager factory
