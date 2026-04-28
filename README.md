@@ -219,13 +219,14 @@ docs/deep_stress_test_report.md
 
 ## Roadmap
 
+The detailed product-readiness checklist lives in [TODO.md](./TODO.md).
+
+Near-term priorities:
+
 - Tighten packaging and release automation.
 - Add real coverage reporting instead of static badges.
 - Finish CLI/API parity and remove legacy endpoint drift.
-- Expand real-world benchmark datasets beyond synthetic stress data.
-- Improve extractor quality and configurable model management.
-- Add stronger daemon security and multi-user deployment guidance.
-- Archive external comparison snapshots outside the main source tree.
+- Add stronger daemon security and deployment guidance.
 
 ## License
 
