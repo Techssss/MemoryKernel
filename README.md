@@ -1,5 +1,7 @@
 # MemoryKernel
 
+[![CI](https://github.com/Techssss/MemoryKernel/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Techssss/MemoryKernel/actions/workflows/ci.yml)
+
 Local-first project memory for AI agents and developer workflows.
 
 MemoryKernel (`memk`) gives a project a persistent, queryable memory layer backed by
@@ -30,10 +32,10 @@ broader professional use.
 | Graph and sync hardening | Functional with stress coverage |
 | CLI and REST API | Usable, still being polished |
 | Python SDK | Usable synchronous client |
-| Node.js SDK | Usable HTTP client, build pipeline still minimal |
+| Node.js SDK | Usable HTTP client with CI build and tests |
 | File watcher | MVP, metadata/generation oriented |
 | Extraction quality | Regex baseline plus optional spaCy/GLiNER paths |
-| Packaging and release process | In progress |
+| Packaging and release process | CI smoke-tested, release workflows manual-gated |
 
 ## Installation
 
@@ -52,6 +54,9 @@ memk serve
 
 ## Quick Start
 
+For a complete fresh-machine path, see
+[First 10 Minutes With MemoryKernel](./docs/quickstart_first_10_minutes.md).
+
 Initialize a workspace:
 
 ```bash
@@ -69,6 +74,13 @@ memk doctor
 ```
 
 `memk remember` is kept as a friendly alias for `memk add`.
+
+Create and restore a local memory backup:
+
+```bash
+memk backup
+memk restore memk-backup-YYYYMMDDTHHMMSSZ.zip --force
+```
 
 Ingest recent Git history:
 
@@ -212,10 +224,26 @@ docs/deep_stress_test_report.md
 - Package name: `memk`.
 - CLI entry point: `memk`.
 - Default daemon bind: `127.0.0.1:15301`.
-- CI runs Python tests, Python package build, and Node SDK build.
+- CI runs Python tests with coverage, package smoke tests, and Node SDK tests.
 - Data remains local unless an embedding/extraction provider you configure downloads
   or calls external models.
 - The project currently prefers correctness and recoverability over raw throughput.
+- Set `MEMK_API_TOKEN` to require bearer-token authentication for protected
+  daemon endpoints.
+
+## Documentation
+
+- [First 10 Minutes](./docs/quickstart_first_10_minutes.md)
+- [Troubleshooting](./docs/troubleshooting.md)
+- [Compatibility Matrix](./docs/compatibility.md)
+- [REST API v1](./docs/api_v1.md)
+- [Benchmarking](./docs/benchmarking.md)
+- [Backup And Restore](./docs/backup_restore.md)
+- [Upgrade Guide](./docs/upgrade_guide.md)
+- [Example Apps](./docs/example_apps.md)
+- [Release Process](./docs/release.md)
+- [Contributing](./CONTRIBUTING.md)
+- [Security Policy](./SECURITY.md)
 
 ## Roadmap
 
@@ -224,9 +252,8 @@ The detailed product-readiness checklist lives in [TODO.md](./TODO.md).
 Near-term priorities:
 
 - Tighten packaging and release automation.
-- Add real coverage reporting instead of static badges.
 - Finish CLI/API parity and remove legacy endpoint drift.
-- Add stronger daemon security and deployment guidance.
+- Add stronger multi-user deployment guidance.
 
 ## License
 

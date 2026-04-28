@@ -35,6 +35,18 @@ python -m pytest -q -rs tests/test_large_scale_graph_sync_stress.py
 
 This covers graph indexing, Merkle delta sync, BLOB propagation, fact reconciliation, checkpoints, archive/unarchive state, and final convergence across two replicas.
 
+## Daemon Soak Test
+
+Run:
+
+```powershell
+$env:MEMK_RUN_SOAK = "1"
+python -m pytest -q -rs tests/test_daemon_soak.py
+```
+
+This repeats daemon health checks and request ID propagation. It is opt-in so
+the regular suite stays fast and dependency-light.
+
 ## Benchmark Suite
 
 Run a small offline benchmark first:

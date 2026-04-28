@@ -24,6 +24,8 @@ class RequestMetrics:
     latency_ms: float
     cache_hit: bool
     degraded: bool
+    status_code: int = 200
+    error: bool = False
     timestamp: float = field(default_factory=time.time)
 
 
@@ -48,6 +50,7 @@ class MetricsCollector:
         self.total_requests = 0
         self.cache_hits = 0
         self.degraded_requests = 0
+        self.error_requests = 0
         
         # Start time
         self.start_time = time.time()
@@ -61,6 +64,8 @@ class MetricsCollector:
                 self.cache_hits += 1
             if metrics.degraded:
                 self.degraded_requests += 1
+            if metrics.error or metrics.status_code >= 400:
+                self.error_requests += 1
     
     def get_latency_percentiles(self) -> Dict[str, float]:
         """Calculate latency percentiles from recent requests."""
@@ -93,6 +98,12 @@ class MetricsCollector:
         if self.total_requests == 0:
             return 0.0
         return round(self.degraded_requests / self.total_requests, 3)
+
+    def get_error_rate(self) -> float:
+        """Calculate request error rate."""
+        if self.total_requests == 0:
+            return 0.0
+        return round(self.error_requests / self.total_requests, 3)
     
     def get_request_rate(self) -> float:
         """Calculate requests per second."""
@@ -126,6 +137,10 @@ class MetricsCollector:
                 "rate": self.get_degraded_rate(),
                 "total": self.degraded_requests,
             },
+            "errors": {
+                "rate": self.get_error_rate(),
+                "total": self.error_requests,
+            },
             "operations": self.get_operation_breakdown(),
             "uptime_seconds": round(time.time() - self.start_time, 1),
         }
@@ -137,6 +152,7 @@ class MetricsCollector:
             self.total_requests = 0
             self.cache_hits = 0
             self.degraded_requests = 0
+            self.error_requests = 0
             self.start_time = time.time()
 
 
@@ -155,7 +171,14 @@ def get_metrics_collector() -> MetricsCollector:
     return _collector
 
 
-def record_request(operation: str, latency_ms: float, cache_hit: bool = False, degraded: bool = False):
+def record_request(
+    operation: str,
+    latency_ms: float,
+    cache_hit: bool = False,
+    degraded: bool = False,
+    status_code: int = 200,
+    error: bool = False,
+):
     """Convenience function to record a request."""
     collector = get_metrics_collector()
     metrics = RequestMetrics(
@@ -163,5 +186,7 @@ def record_request(operation: str, latency_ms: float, cache_hit: bool = False, d
         latency_ms=latency_ms,
         cache_hit=cache_hit,
         degraded=degraded,
+        status_code=status_code,
+        error=error,
     )
     collector.record_request(metrics)

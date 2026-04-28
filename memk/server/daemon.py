@@ -1,12 +1,16 @@
 import logging
 import time
 import asyncio
+import secrets
+import uuid
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from memk.core.service import MemoryKernelService
 from memk.core.runtime import get_runtime
+from memk.core.metrics import record_request
 from memk.api.v1 import router as v1_router
 
 # Configure logging
@@ -23,6 +27,28 @@ service = MemoryKernelService()
 
 # Global watcher registry (workspace_id -> WatcherService)
 _watchers: Dict[str, Any] = {}
+
+PUBLIC_PATHS = {"/health", "/v1/health", "/docs", "/redoc", "/openapi.json"}
+
+
+def _configured_api_token() -> str:
+    return os.getenv("MEMK_API_TOKEN", "").strip()
+
+
+def _request_token(request: Request) -> str:
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return request.headers.get("x-memk-token", "").strip()
+
+
+def _is_public_path(path: str) -> bool:
+    return path in PUBLIC_PATHS or path.startswith("/docs/")
+
+
+def _mark_deprecated(response: Response, successor: str) -> None:
+    response.headers["Deprecation"] = "true"
+    response.headers["Link"] = f"<{successor}>; rel=\"successor-version\""
 
 class AddRequest(BaseModel):
     content: str
@@ -89,44 +115,118 @@ async def eviction_background_task():
             logger.error(f"Error in eviction task: {e}")
 
 @app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
+async def request_observability_and_auth(request: Request, call_next):
     start_time = time.perf_counter()
-    response = await call_next(request)
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    token = _configured_api_token()
+    path = request.url.path
+
+    if token and not _is_public_path(path):
+        provided = _request_token(request)
+        if not provided or not secrets.compare_digest(provided, token):
+            process_time = time.perf_counter() - start_time
+            record_request(
+                f"{request.method} {path}",
+                process_time * 1000,
+                degraded=True,
+                status_code=401,
+                error=True,
+            )
+            response = JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "code": "auth_required",
+                        "message": "Missing or invalid MemoryKernel API token.",
+                    }
+                },
+            )
+            response.headers["X-Process-Time"] = str(process_time)
+            response.headers["X-Request-ID"] = request_id
+            logger.warning(
+                "request rejected method=%s path=%s status=401 request_id=%s",
+                request.method,
+                path,
+                request_id,
+            )
+            return response
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        process_time = time.perf_counter() - start_time
+        record_request(
+            f"{request.method} {path}",
+            process_time * 1000,
+            degraded=True,
+            status_code=500,
+            error=True,
+        )
+        logger.exception(
+            "request failed method=%s path=%s request_id=%s",
+            request.method,
+            path,
+            request_id,
+        )
+        raise
+
     process_time = time.perf_counter() - start_time
     response.headers["X-Process-Time"] = str(process_time)
+    response.headers["X-Request-ID"] = request_id
+    record_request(
+        f"{request.method} {path}",
+        process_time * 1000,
+        degraded=response.status_code >= 500,
+        status_code=response.status_code,
+        error=response.status_code >= 400,
+    )
+    logger.info(
+        "request method=%s path=%s status=%s duration_ms=%.2f request_id=%s",
+        request.method,
+        path,
+        response.status_code,
+        process_time * 1000,
+        request_id,
+    )
     return response
 
 @app.get("/health")
-def health():
+def health(response: Response):
+    _mark_deprecated(response, "/v1/health")
     return {
         "status": "ok", 
         "version": "0.1.0",
+        "auth_enabled": bool(_configured_api_token()),
         "diagnostics": service.get_diagnostics()
     }
 
 @app.post("/add")
-async def add_memory(req: AddRequest):
+async def add_memory(req: AddRequest, response: Response):
+    _mark_deprecated(response, "/v1/remember")
     try:
         return await service.add_memory(req.content, req.importance, req.confidence, req.workspace_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/search")
-async def search(req: SearchRequest):
+async def search(req: SearchRequest, response: Response):
+    _mark_deprecated(response, "/v1/search")
     try:
         return await service.search(req.query, req.limit, req.workspace_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/context")
-async def build_context(req: ContextRequest):
+async def build_context(req: ContextRequest, response: Response):
+    _mark_deprecated(response, "/v1/context")
     try:
         return await service.build_context(req.query, req.max_chars, req.threshold, req.workspace_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/doctor")
-def doctor(workspace_id: str = "default"):
+def doctor(response: Response, workspace_id: str = "default"):
+    _mark_deprecated(response, "/v1/status")
     try:
         return service.get_diagnostics(workspace_id)
     except Exception as e:

@@ -50,6 +50,14 @@ def resolve_workspace_id(workspace_id: Optional[str]) -> str:
     return "default"
 
 
+def api_error(code: str, message: str, status_code: int = 500) -> HTTPException:
+    """Create a stable API error payload."""
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": code, "message": message},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Core Operations
 # ---------------------------------------------------------------------------
@@ -85,7 +93,7 @@ async def remember(req: RememberRequest):
         
     except Exception as e:
         logger.error(f"Remember failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise api_error("remember_failed", str(e))
 
 
 @router.post("/search", response_model=APIResponse)
@@ -117,7 +125,7 @@ async def search(req: SearchRequest):
         
     except Exception as e:
         logger.error(f"Search failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise api_error("search_failed", str(e))
 
 
 @router.post("/context", response_model=APIResponse)
@@ -151,7 +159,7 @@ async def context(req: ContextRequest):
         
     except Exception as e:
         logger.error(f"Context build failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise api_error("context_failed", str(e))
 
 
 @router.get("/status", response_model=APIResponse)
@@ -202,7 +210,7 @@ async def status(workspace_id: Optional[str] = Query(None)):
         
     except Exception as e:
         logger.error(f"Status check failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise api_error("status_failed", str(e))
 
 
 @router.post("/ingest/git", response_model=APIResponse)
@@ -266,7 +274,7 @@ async def ingest_git(req: IngestGitRequest):
         
     except Exception as e:
         logger.error(f"Git ingestion failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise api_error("ingest_git_failed", str(e))
 
 
 @router.get("/health")
@@ -276,7 +284,12 @@ async def health():
     
     Returns OK if service is running.
     """
-    return {"status": "ok", "version": "0.1.0"}
+    import os
+    return {
+        "status": "ok",
+        "version": "0.1.0",
+        "auth_enabled": bool(os.getenv("MEMK_API_TOKEN", "").strip()),
+    }
 
 
 @router.get("/metrics", response_model=APIResponse)
@@ -323,6 +336,7 @@ async def metrics(workspace_id: Optional[str] = Query(None)):
             "latency": metrics_summary.get("latency", {}),
             "cache": metrics_summary.get("cache", {}),
             "degraded": metrics_summary.get("degraded", {}),
+            "errors": metrics_summary.get("errors", {}),
             "operations": metrics_summary.get("operations", {}),
             "database": {
                 "size_mb": db_stats.get("database_size_mb", 0),
@@ -355,5 +369,5 @@ async def metrics(workspace_id: Optional[str] = Query(None)):
         
     except Exception as e:
         logger.error(f"Metrics collection failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise api_error("metrics_failed", str(e))
 

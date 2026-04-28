@@ -3,6 +3,7 @@ import requests
 import time
 import datetime
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from rich.console import Console
 from rich.table import Table
@@ -37,9 +38,34 @@ def get_workspace_id() -> str:
 
 def _post_v1(endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """POST to the versioned daemon API and return decoded JSON."""
-    resp = requests.post(f"{URL}/v1/{endpoint.lstrip('/')}", json=payload, timeout=30)
-    resp.raise_for_status()
+    resp = requests.post(
+        f"{URL}/v1/{endpoint.lstrip('/')}",
+        json=payload,
+        timeout=30,
+        headers=_daemon_headers(),
+    )
+    _raise_for_status(resp)
     return resp.json()
+
+def _daemon_headers() -> Dict[str, str]:
+    """Return daemon auth headers when MEMK_API_TOKEN is configured."""
+    token = os.getenv("MEMK_API_TOKEN", "").strip()
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+def _raise_for_status(resp: requests.Response) -> None:
+    """Raise a readable daemon error, including v1 error codes when present."""
+    if resp.status_code < 400:
+        return
+    message = resp.text
+    try:
+        detail = resp.json().get("detail")
+        if isinstance(detail, dict) and detail.get("code"):
+            message = f"{detail['code']}: {detail.get('message', '')}".strip()
+    except Exception:
+        pass
+    raise RuntimeError(message)
 
 def _response_data(resp: Dict[str, Any]) -> Dict[str, Any]:
     """Handle both v1 APIResponse and older flat daemon responses."""
@@ -103,6 +129,156 @@ def status():
     color = "green" if "RUNNING" in stat else "red"
     console.print(f"  Status: [{color}]{stat}[/{color}]")
     console.print(f"  Endpoint: [cyan]{server_manager.URL}[/cyan]")
+
+@app.command()
+def health():
+    """Check daemon liveness through the versioned API."""
+    if not is_running():
+        console.print("[red]Daemon not running.[/red]")
+        raise typer.Exit(code=1)
+
+    try:
+        resp = requests.get(f"{URL}/v1/health", timeout=5, headers=_daemon_headers())
+        _raise_for_status(resp)
+        data = resp.json()
+        console.print("[bold blue]Daemon Health[/bold blue]")
+        console.print(f"  Status: [green]{data.get('status', 'unknown')}[/green]")
+        console.print(f"  Version: [cyan]{data.get('version', 'unknown')}[/cyan]")
+        console.print(f"  Auth Enabled: [cyan]{data.get('auth_enabled', False)}[/cyan]")
+    except Exception as e:
+        console.print(f"[bold red]Health check failed:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+@app.command()
+def stats(workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")):
+    """Show daemon metrics through the versioned API."""
+    workspace_id = workspace or get_workspace_id()
+    if not is_running():
+        console.print("[red]Daemon not running.[/red]")
+        raise typer.Exit(code=1)
+
+    try:
+        resp = requests.get(
+            f"{URL}/v1/metrics",
+            params={"workspace_id": workspace_id},
+            timeout=10,
+            headers=_daemon_headers(),
+        )
+        _raise_for_status(resp)
+        data = _response_data(resp.json())
+
+        console.print("[bold blue]MemoryKernel Metrics[/bold blue]")
+        requests_data = data.get("requests", {})
+        latency = data.get("latency", {})
+        errors = data.get("errors", {})
+        database = data.get("database", {})
+
+        console.print(f"  Requests: [cyan]{requests_data.get('total', 0)}[/cyan]")
+        console.print(f"  Request Rate: [cyan]{requests_data.get('rate_per_sec', 0)} / sec[/cyan]")
+        console.print(f"  Error Rate: [cyan]{errors.get('rate', 0)}[/cyan]")
+        console.print(f"  Latency p95: [cyan]{latency.get('p95', 0)} ms[/cyan]")
+        console.print(f"  DB Size: [cyan]{database.get('size_mb', 0)} MB[/cyan]")
+        console.print(f"  Memories: [cyan]{database.get('total_memories', 0)}[/cyan]")
+        console.print(f"  Facts: [cyan]{database.get('total_facts', 0)}[/cyan]")
+    except Exception as e:
+        console.print(f"[bold red]Stats failed:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+@app.command()
+def backup(
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Backup archive path.")
+):
+    """Create a zip backup of the current workspace memory store."""
+    from pathlib import Path
+    import zipfile
+    from memk.workspace.manager import WorkspaceManager
+
+    ws = WorkspaceManager()
+    if not ws.is_initialized():
+        console.print("[red]Workspace not initialized. Run 'memk init' first.[/red]")
+        raise typer.Exit(code=1)
+
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    archive = Path(output) if output else ws.root / f"memk-backup-{stamp}.zip"
+    archive = archive.expanduser().resolve()
+    if archive.exists():
+        console.print(f"[red]Backup already exists:[/red] {archive}")
+        raise typer.Exit(code=1)
+
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    db_path = Path(ws.get_db_path())
+    files = [
+        (ws.manifest_path, "manifest.json"),
+        (db_path, "state/state.db"),
+        (Path(str(db_path) + "-wal"), "state/state.db-wal"),
+        (Path(str(db_path) + "-shm"), "state/state.db-shm"),
+    ]
+
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path, arcname in files:
+            if path.exists():
+                zf.write(path, arcname)
+
+    console.print(f"[green]Backup created:[/green] [cyan]{archive}[/cyan]")
+
+@app.command()
+def restore(
+    archive: str,
+    force: bool = typer.Option(False, "--force", help="Confirm replacing current .memk state.")
+):
+    """Restore a workspace memory store from a backup archive."""
+    from pathlib import Path, PurePosixPath
+    import shutil
+    import zipfile
+    from memk.workspace.manager import WorkspaceManager
+
+    if is_running():
+        console.print("[red]Stop the daemon before restoring: memk stop[/red]")
+        raise typer.Exit(code=1)
+
+    if not force:
+        console.print("[red]Restore replaces local .memk state. Re-run with --force to confirm.[/red]")
+        raise typer.Exit(code=1)
+
+    archive_path = Path(archive).expanduser().resolve()
+    if not archive_path.exists():
+        console.print(f"[red]Backup not found:[/red] {archive_path}")
+        raise typer.Exit(code=1)
+
+    ws = WorkspaceManager()
+    allowed = {
+        "manifest.json",
+        "state/state.db",
+        "state/state.db-wal",
+        "state/state.db-shm",
+    }
+
+    with zipfile.ZipFile(archive_path, "r") as zf:
+        names = {info.filename.replace("\\", "/") for info in zf.infolist()}
+        if "manifest.json" not in names or "state/state.db" not in names:
+            console.print("[red]Invalid backup: manifest.json and state/state.db are required.[/red]")
+            raise typer.Exit(code=1)
+
+        ws.memk_path.mkdir(parents=True, exist_ok=True)
+        for info in zf.infolist():
+            name = info.filename.replace("\\", "/")
+            parts = PurePosixPath(name).parts
+            if name not in allowed or ".." in parts or PurePosixPath(name).is_absolute():
+                console.print(f"[red]Invalid backup entry:[/red] {name}")
+                raise typer.Exit(code=1)
+
+            target = (ws.memk_path / Path(*parts)).resolve()
+            try:
+                target.relative_to(ws.memk_path.resolve())
+            except ValueError:
+                console.print(f"[red]Invalid backup entry:[/red] {name}")
+                raise typer.Exit(code=1)
+
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info, "r") as src, open(target, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+
+    console.print(f"[green]Backup restored from:[/green] [cyan]{archive_path}[/cyan]")
 
 # --- Core Commands ---
 
@@ -213,7 +389,11 @@ def doctor(workspace: Optional[str] = typer.Option(None, "--workspace", "-w", he
     workspace_id = workspace or get_workspace_id()
     try:
         if is_running():
-            diag = requests.get(f"{URL}/doctor", params={"workspace_id": workspace_id}).json()
+            diag = requests.get(
+                f"{URL}/doctor",
+                params={"workspace_id": workspace_id},
+                headers=_daemon_headers(),
+            ).json()
         else:
             service = get_service()
             diag = service.get_diagnostics(workspace_id)
@@ -303,7 +483,11 @@ def jobs(
             return
 
         while True:
-            resp = requests.get(f"{URL}/jobs", params={"workspace_id": workspace_id}).json()
+            resp = requests.get(
+                f"{URL}/jobs",
+                params={"workspace_id": workspace_id},
+                headers=_daemon_headers(),
+            ).json()
             table = Table(title="Background Jobs")
             table.add_column("ID", style="cyan")
             table.add_column("Type", style="magenta")
@@ -348,7 +532,7 @@ def synthesize_all():
     """Build a complete knowledge base."""
     try:
         if is_running():
-            resp = requests.post(f"{URL}/jobs/synthesize").json()
+            resp = requests.post(f"{URL}/jobs/synthesize", headers=_daemon_headers()).json()
             console.print(f"[green]Job submitted![/green] Job ID: [cyan]{resp['job_id']}[/cyan]")
             return
 
@@ -517,7 +701,7 @@ def watch_stop():
             return
         
         # Send stop command to daemon
-        resp = requests.post(f"{URL}/watcher/stop").json()
+        resp = requests.post(f"{URL}/watcher/stop", headers=_daemon_headers()).json()
         
         if resp.get("success"):
             console.print("[green]✓ File watcher stopped.[/green]")
@@ -533,7 +717,7 @@ def watch_status():
     try:
         if is_running():
             # Get status from daemon
-            resp = requests.get(f"{URL}/watcher/status").json()
+            resp = requests.get(f"{URL}/watcher/status", headers=_daemon_headers()).json()
             status = resp.get("status", {})
         else:
             console.print("[yellow]Daemon not running. Checking local workspace...[/yellow]")
@@ -578,7 +762,11 @@ def sync_stats(workspace: Optional[str] = typer.Option(None, "--workspace", "-w"
         if is_running():
             # For simplicity, we fallback to local service if daemon doesn't have the endpoint yet
             try:
-                resp = requests.get(f"{URL}/sync/stats", params={"workspace_id": workspace_id}).json()
+                resp = requests.get(
+                    f"{URL}/sync/stats",
+                    params={"workspace_id": workspace_id},
+                    headers=_daemon_headers(),
+                ).json()
                 if "error" not in resp:
                     stats = resp
                 else: raise Exception(resp["error"])

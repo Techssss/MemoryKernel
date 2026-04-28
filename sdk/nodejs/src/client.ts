@@ -21,6 +21,7 @@ const DEFAULT_DAEMON_URL = process.env.MEMK_DAEMON_URL || 'http://127.0.0.1:1530
 export interface MemoryKernelOptions {
   daemonUrl?: string;
   workspaceId?: string;
+  apiToken?: string;
 }
 
 /**
@@ -54,14 +55,27 @@ export class MemoryKernel {
   constructor(options: MemoryKernelOptions = {}) {
     const daemonUrl = options.daemonUrl || DEFAULT_DAEMON_URL;
     this.workspaceId = options.workspaceId;
+    const apiToken = options.apiToken || process.env.MEMK_API_TOKEN;
 
     this.client = axios.create({
       baseURL: daemonUrl,
       timeout: 30000,
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...(apiToken ? { Authorization: `Bearer ${apiToken}` } : {})
       }
     });
+
+    this.client.interceptors.response.use(
+      response => response,
+      (error: any) => {
+        const detail = error?.response?.data?.detail;
+        if (detail?.code) {
+          error.message = `${detail.code}: ${detail.message || ''}`.trim();
+        }
+        return Promise.reject(error);
+      }
+    );
 
     // Check daemon is running
     this.checkDaemon().catch(() => {

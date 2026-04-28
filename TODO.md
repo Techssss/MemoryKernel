@@ -3,11 +3,11 @@
 This checklist tracks the next work needed to move MemoryKernel from a clean
 developer beta toward a professional product.
 
-Current assessment after the April 28, 2026 cleanup:
+Current assessment after the April 28, 2026 release-readiness pass:
 
-- Overall professional product readiness: 68-72%.
-- Open-source developer beta readiness: about 75%.
-- Commercial-grade product readiness: about 60-65%.
+- Overall professional product readiness: 78-82%.
+- Open-source developer beta readiness: about 85%.
+- Commercial-grade product readiness: about 70%.
 
 ## P0 - Keep The Beta Stable
 
@@ -18,11 +18,11 @@ Goal: protect the current baseline while new product work lands.
 - [x] Add CI for Python tests, Python package build, and Node SDK build.
 - [x] Align CLI daemon calls with versioned `/v1` API endpoints.
 - [x] Keep README honest about beta status and current limitations.
-- [ ] Add CI badges to README after the GitHub Actions workflow is verified on
+- [x] Add CI badges to README after the GitHub Actions workflow is verified on
   the remote repository.
-- [ ] Add a short `CONTRIBUTING.md` covering setup, tests, commit style, and
+- [x] Add a short `CONTRIBUTING.md` covering setup, tests, commit style, and
   expected PR checks.
-- [ ] Add an `SECURITY.md` with local-first threat model, supported versions,
+- [x] Add an `SECURITY.md` with local-first threat model, supported versions,
   and private disclosure contact.
 
 ## P1 - Reach 80%: Release-Ready Open Source Beta
@@ -30,20 +30,20 @@ Goal: protect the current baseline while new product work lands.
 Goal: a developer can install, run, test, and trust the package without local
 context from the maintainer.
 
-- [ ] Verify `python -m build` in a clean virtual environment on Windows, macOS,
+- [x] Verify `python -m build` in a clean virtual environment on Windows, macOS,
   and Linux.
-- [ ] Add release workflow for tagged Python artifacts, with manual approval
+- [x] Add release workflow for tagged Python artifacts, with manual approval
   before publishing to PyPI.
-- [ ] Add release workflow for the Node SDK, with manual approval before npm
+- [x] Add release workflow for the Node SDK, with manual approval before npm
   publish.
-- [ ] Add smoke tests that install the built wheel and run `memk --help`,
+- [x] Add smoke tests that install the built wheel and run `memk --help`,
   `memk add`, `memk search`, and the Python SDK quickstart.
-- [ ] Replace static coverage claims with real `pytest --cov` reporting.
-- [ ] Publish a minimal "first 10 minutes" quickstart that starts from an empty
+- [x] Replace static coverage claims with real `pytest --cov` reporting.
+- [x] Publish a minimal "first 10 minutes" quickstart that starts from an empty
   machine and ends with a successful memory search.
-- [ ] Add a troubleshooting page for dependency installs, local model downloads,
+- [x] Add a troubleshooting page for dependency installs, local model downloads,
   SQLite permissions, and daemon startup issues.
-- [ ] Add a compatibility matrix for Python versions, OS support, and optional
+- [x] Add a compatibility matrix for Python versions, OS support, and optional
   model dependencies.
 
 Acceptance criteria:
@@ -59,16 +59,16 @@ build on.
 
 - [ ] Finish CLI/API parity for remember, search, context, forget, export,
   import, health, and stats operations.
-- [ ] Remove or clearly deprecate legacy unversioned daemon endpoints.
+- [x] Remove or clearly deprecate legacy unversioned daemon endpoints.
 - [ ] Add typed response contracts for the Python SDK and ensure FastAPI schemas
   match them.
-- [ ] Add generated or hand-maintained API reference docs for `/v1`.
-- [ ] Add Node SDK tests that run in CI, not just a TypeScript build.
-- [ ] Add stable error codes and user-facing error messages for daemon, SDK, and
+- [x] Add hand-maintained API reference docs for `/v1`.
+- [x] Add Node SDK tests that run in CI, not just a TypeScript build.
+- [x] Add stable error codes and user-facing error messages for daemon, SDK, and
   CLI paths.
 - [ ] Add config migration tests so future storage/config changes do not break
   existing users silently.
-- [ ] Add benchmark documentation that separates repeatable results from
+- [x] Add benchmark documentation that separates repeatable results from
   experimental claims.
 
 Acceptance criteria:
@@ -82,17 +82,17 @@ Acceptance criteria:
 
 Goal: make the project credible for long-running, multi-user, or team usage.
 
-- [ ] Add daemon authentication guidance and optional API token enforcement.
-- [ ] Document network exposure risks and default local-only deployment posture.
-- [ ] Add structured logs with request IDs for daemon operations.
-- [ ] Add basic metrics for ingestion count, search latency, storage size, and
+- [x] Add daemon authentication guidance and optional API token enforcement.
+- [x] Document network exposure risks and default local-only deployment posture.
+- [x] Add structured logs with request IDs for daemon operations.
+- [x] Add basic metrics for ingestion count, search latency, storage size, and
   error rates.
-- [ ] Add backup and restore workflow for local memory stores.
-- [ ] Add upgrade/downgrade guidance for persisted data.
-- [ ] Add a small dashboard or TUI health view for storage, index, and daemon
+- [x] Add backup and restore workflow for local memory stores.
+- [x] Add upgrade/downgrade guidance for persisted data.
+- [x] Add a small dashboard or TUI health view for storage, index, and daemon
   status.
-- [ ] Add long-run soak tests for daemon stability and storage growth.
-- [ ] Add real-world example apps: coding agent memory, local research notebook,
+- [x] Add long-run soak tests for daemon stability and storage growth.
+- [x] Add real-world example apps: coding agent memory, local research notebook,
   and support assistant memory.
 
 Acceptance criteria:

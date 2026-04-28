@@ -1,0 +1,39 @@
+name: Release Node SDK
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "sdk-nodejs-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish Node SDK to npm
+    runs-on: ubuntu-latest
+    environment: npm
+    defaults:
+      run:
+        working-directory: sdk/nodejs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Test and build
+        run: npm test
+
+      - name: Publish
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

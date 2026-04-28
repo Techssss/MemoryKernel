@@ -62,7 +62,8 @@ class MemoryKernel:
         self,
         daemon_url: str = DEFAULT_DAEMON_URL,
         workspace_id: Optional[str] = None,
-        auto_start_daemon: bool = False
+        auto_start_daemon: bool = False,
+        api_token: Optional[str] = None
     ):
         """
         Initialize MemoryKernel client.
@@ -71,9 +72,11 @@ class MemoryKernel:
             daemon_url: URL of the memk daemon (default: http://127.0.0.1:15301)
             workspace_id: Workspace ID (auto-detected if not provided)
             auto_start_daemon: Attempt to start daemon if not running
+            api_token: Optional daemon API token. Defaults to MEMK_API_TOKEN.
         """
         self.daemon_url = daemon_url.rstrip("/")
         self.workspace_id = workspace_id
+        self.api_token = api_token or os.getenv("MEMK_API_TOKEN")
         self._generation: Optional[int] = None
         
         # Check daemon is running
@@ -89,7 +92,7 @@ class MemoryKernel:
     def _is_daemon_running(self) -> bool:
         """Check if daemon is running."""
         try:
-            resp = requests.get(f"{self.daemon_url}/v1/health", timeout=1)
+            resp = requests.get(f"{self.daemon_url}/v1/health", timeout=1, headers=self._headers())
             return resp.status_code == 200
         except:
             return False
@@ -108,9 +111,19 @@ class MemoryKernel:
         except Exception as e:
             logger.error(f"Failed to start daemon: {e}")
     
+    def _headers(self) -> Dict[str, str]:
+        """Return daemon auth headers when token auth is configured."""
+        if not self.api_token:
+            return {}
+        return {"Authorization": f"Bearer {self.api_token}"}
+
     def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
         """Make HTTP request to daemon."""
         url = f"{self.daemon_url}{endpoint}"
+        headers = dict(kwargs.pop("headers", {}) or {})
+        headers.update(self._headers())
+        if headers:
+            kwargs["headers"] = headers
         
         try:
             if method == "GET":
@@ -129,7 +142,18 @@ class MemoryKernel:
                 "Start with: memk serve"
             )
         except requests.exceptions.HTTPError as e:
-            raise RuntimeError(f"API error: {e.response.text}")
+            raise RuntimeError(f"API error: {self._format_api_error(e.response)}")
+
+    @staticmethod
+    def _format_api_error(response: requests.Response) -> str:
+        """Format v1 API errors with stable codes when available."""
+        try:
+            detail = response.json().get("detail")
+            if isinstance(detail, dict) and detail.get("code"):
+                return f"{detail['code']}: {detail.get('message', '')}".strip()
+        except Exception:
+            pass
+        return response.text
     
     def remember(
         self,

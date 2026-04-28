@@ -7,6 +7,7 @@
  */
 
 export { MemoryKernel, MemoryKernel as MemoryKernelClient } from './client';
+export type { MemoryKernelOptions } from './client';
 export type {
   MemoryItem,
   WorkspaceStatus,

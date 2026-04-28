@@ -64,6 +64,9 @@ stress_test_output*.txt
 Demo/
 Documents/
 
+# Node
+node_modules/
+
 # OS files
 .DS_Store
 Thumbs.db
