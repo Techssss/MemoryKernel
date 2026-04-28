@@ -24,7 +24,7 @@ setup(
     version="0.1.0",
     author="MemoryKernel Team",
     author_email="dev@memorykernel.dev",
-    description="Local-first project brain for AI agents and developer workflows",
+    description="Project memory that AI agents can carry across sessions",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/Techssss/MemoryKernel",
@@ -55,6 +55,7 @@ setup(
     entry_points={
         "console_scripts": [
             "memk=memk.cli.main:app",
+            "memk-mcp=memk.mcp.server:main",
         ],
     },
     include_package_data=True,

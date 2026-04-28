@@ -2,12 +2,12 @@
 
 [![CI](https://github.com/Techssss/MemoryKernel/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Techssss/MemoryKernel/actions/workflows/ci.yml)
 
-Local-first project memory for AI agents and developer workflows.
+Project memory that AI agents can carry across sessions.
 
-MemoryKernel (`memk`) gives a project a persistent, queryable memory layer backed by
-SQLite. It stores raw memories, extracts fact-like knowledge, builds local retrieval
-context, and keeps workspace state isolated so agents can reuse project knowledge
-across sessions.
+MemoryKernel (`memk`) gives every AI coding agent a durable project memory that
+survives restarts, context resets, and handoffs. It stores raw memories, extracts
+fact-like knowledge, builds local retrieval context, and keeps workspace state
+isolated in SQLite.
 
 Current status: **beta / active development**. The core storage, retrieval, graph, and
 sync paths are covered by tests, but the product surface is still being hardened for
@@ -15,6 +15,7 @@ broader professional use.
 
 ## What It Does
 
+- MCP-first memory tools for AI agents.
 - Local SQLite storage with WAL mode and forward-only schema migrations.
 - Semantic and lexical retrieval over memories and facts.
 - Deterministic offline embedding fallback for tests and constrained environments.
@@ -30,7 +31,8 @@ broader professional use.
 | --- | --- |
 | Core storage and retrieval | Functional and tested |
 | Graph and sync hardening | Functional with stress coverage |
-| CLI and REST API | Usable, still being polished |
+| CLI and REST API | Usable, 3-command onboarding added |
+| MCP server | Minimal tool surface for agent integrations |
 | Python SDK | Usable synchronous client |
 | Node.js SDK | Usable HTTP client with CI build and tests |
 | File watcher | MVP, metadata/generation oriented |
@@ -57,23 +59,45 @@ memk serve
 For a complete fresh-machine path, see
 [First 10 Minutes With MemoryKernel](./docs/quickstart_first_10_minutes.md).
 
-Initialize a workspace:
+You only need three commands to start:
 
 ```bash
 cd /path/to/your/project
-memk init
+memk remember "The API endpoint for users is /api/v1/users"
+memk recall "users API endpoint"
+memk health
 ```
 
-Add and search memory:
+No explicit init is required for first use. MemoryKernel creates `.memk/`
+workspace state automatically when the first memory command runs.
+
+`memk search` remains available for developer workflows. `memk context` builds a
+compact context block for an agent prompt:
 
 ```bash
-memk add "The API endpoint for users is /api/v1/users"
-memk search "users API endpoint"
 memk context "How do I call the users API?"
-memk doctor
 ```
 
-`memk remember` is kept as a friendly alias for `memk add`.
+## MCP For Agents
+
+Use the MCP server when an AI tool should remember and recall automatically:
+
+```bash
+memk-mcp
+```
+
+The starter MCP surface is intentionally small:
+
+| Tool | Purpose |
+| --- | --- |
+| `memk_remember` | Store project memory |
+| `memk_recall` | Recall relevant memory |
+| `memk_context` | Build compact agent context |
+| `memk_health` | Show memory health and next actions |
+
+Setup guides for Claude Code, Cursor, VS Code, and OpenClaw are in
+[Agent Setup](./docs/agent_setup.md). Tool details are in
+[MCP Tools](./docs/mcp_tools.md).
 
 Create and restore a local memory backup:
 
@@ -180,10 +204,10 @@ Regular suite:
 python -m pytest -q -rs tests
 ```
 
-Current verified result on April 27, 2026:
+Current verified result on April 28, 2026:
 
 ```text
-128 passed, 25 skipped
+135 passed, 28 skipped
 ```
 
 Expected skips:
@@ -234,6 +258,8 @@ docs/deep_stress_test_report.md
 ## Documentation
 
 - [First 10 Minutes](./docs/quickstart_first_10_minutes.md)
+- [Agent Setup](./docs/agent_setup.md)
+- [MCP Tools](./docs/mcp_tools.md)
 - [Troubleshooting](./docs/troubleshooting.md)
 - [Compatibility Matrix](./docs/compatibility.md)
 - [REST API v1](./docs/api_v1.md)

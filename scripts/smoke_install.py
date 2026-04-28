@@ -47,7 +47,11 @@ def main() -> None:
     run([python, "-m", "pip", "install", str(latest_wheel())])
     run([python, "-m", "memk.cli.main", "--help"])
     run([python, "-m", "memk.cli.main", "add", "--help"])
+    run([python, "-m", "memk.cli.main", "remember", "--help"])
     run([python, "-m", "memk.cli.main", "search", "--help"])
+    run([python, "-m", "memk.cli.main", "recall", "--help"])
+    run([python, "-m", "memk.cli.main", "health", "--help"])
+    run([python, "-m", "memk.mcp.server", "--help"])
     run([
         python,
         "-c",

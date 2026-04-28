@@ -6,6 +6,7 @@ import logging
 import os
 from typing import List, Dict, Any, Optional
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 from memk.server.manager import URL, is_running
 from memk.core.service import MemoryKernelService
@@ -13,7 +14,7 @@ from memk.core.service import MemoryKernelService
 logger = logging.getLogger(__name__)
 
 app = typer.Typer(
-    help="MemoryKernel (memk) - Local-first memory infrastructure for AI agents",
+    help="MemoryKernel (memk) - Project memory that AI agents can carry across sessions",
     no_args_is_help=True
 )
 console = Console()
@@ -26,15 +27,31 @@ def get_service() -> MemoryKernelService:
     return _service_instance
 
 def get_workspace_id() -> str:
-    """Resolve the brain ID from the local manifest."""
-    from memk.workspace.manager import WorkspaceManager
+    """Resolve the brain ID from the local manifest, creating it on first use."""
+    ws = _ensure_workspace(auto_create=True, announce=False)
     try:
-        ws = WorkspaceManager()
-        if ws.is_initialized():
-            return ws.get_manifest().brain_id
-    except:
-        pass
-    return "default"
+        return ws.get_manifest().brain_id
+    except Exception:
+        return "default"
+
+def _ensure_workspace(auto_create: bool = True, announce: bool = False):
+    """Return the workspace manager and optionally initialize first-run state."""
+    from memk.workspace.manager import WorkspaceManager
+    from memk.storage.db import MemoryDB
+
+    ws = WorkspaceManager()
+    if ws.is_initialized() or not auto_create:
+        return ws
+
+    try:
+        ws.init_workspace()
+        MemoryDB(ws.get_db_path()).init_db()
+        if announce:
+            console.print("[green]Initialized MemoryKernel workspace.[/green]")
+            console.print(f"Path: [dim]{ws.memk_path}[/dim]")
+        return ws
+    except Exception as e:
+        raise RuntimeError(f"Failed to initialize workspace: {e}") from e
 
 def _post_v1(endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """POST to the versioned daemon API and return decoded JSON."""
@@ -72,8 +89,70 @@ def _response_data(resp: Dict[str, Any]) -> Dict[str, Any]:
     data = resp.get("data")
     return data if isinstance(data, dict) else resp
 
+def _health_grade(initialized: bool, total_items: int, embed_pct: float, daemon_running: bool) -> str:
+    """Return a simple user-facing health grade."""
+    if not initialized:
+        return "D"
+    if total_items == 0:
+        return "B"
+    if embed_pct >= 90 and daemon_running:
+        return "A"
+    if embed_pct >= 70:
+        return "B"
+    return "C"
+
+def _render_health(
+    *,
+    initialized: bool,
+    daemon_running: bool,
+    workspace_id: str,
+    root: str,
+    stats: Dict[str, Any],
+    runtime: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Render a compact visual health view."""
+    total_memories = int(stats.get("total_memories", 0) or 0)
+    total_facts = int(stats.get("total_active_facts", 0) or 0)
+    total_items = total_memories + total_facts
+    total_embedded = int(stats.get("embedded_memories", 0) or 0) + int(stats.get("embedded_facts", 0) or 0)
+    embed_pct = (total_embedded / total_items * 100) if total_items else 100.0
+    grade = _health_grade(initialized, total_items, embed_pct, daemon_running)
+    grade_color = "green" if grade in {"A", "B"} else "yellow"
+
+    lines = [
+        f"Grade: [{grade_color}]{grade}[/{grade_color}]",
+        f"Workspace: [cyan]{root}[/cyan]",
+        f"Brain ID: [magenta]{workspace_id[:12]}[/magenta]",
+        f"Daemon: [{'green' if daemon_running else 'yellow'}]{'running' if daemon_running else 'not running'}[/]",
+        f"Memories: [cyan]{total_memories}[/cyan]",
+        f"Facts: [cyan]{total_facts}[/cyan]",
+        f"Embedded: [cyan]{total_embedded}/{total_items}[/cyan] ({embed_pct:.1f}%)",
+        f"Database: [cyan]{float(stats.get('database_size_mb', 0) or 0):.2f} MB[/cyan]",
+    ]
+    if runtime:
+        lines.append(f"Index entries: [cyan]{runtime.get('index_entries', 0)}[/cyan]")
+        lines.append(f"Active jobs: [cyan]{runtime.get('active_jobs', 0)}[/cyan]")
+
+    advice = []
+    if not initialized:
+        advice.append("Run `memk remember \"...\"` to create the first memory.")
+    elif total_items == 0:
+        advice.append("Store your first durable project fact with `memk remember`.")
+    if not daemon_running:
+        advice.append("Run `memk serve` for repeated agent/SDK use.")
+    if total_items and embed_pct < 90:
+        advice.append("Run `memk doctor` to inspect low embedding coverage.")
+
+    if advice:
+        lines.append("")
+        lines.append("[bold]Next actions[/bold]")
+        lines.extend(f"- {item}" for item in advice)
+
+    console.print(Panel("\n".join(lines), title="MemoryKernel Health", expand=False))
+
 def _add_memory(content: str, importance: float, confidence: float, workspace: Optional[str]) -> None:
     """Shared implementation for memory write commands."""
+    _ensure_workspace(auto_create=True, announce=True)
     workspace_id = workspace or get_workspace_id()
     try:
         if is_running():
@@ -132,19 +211,40 @@ def status():
 
 @app.command()
 def health():
-    """Check daemon liveness through the versioned API."""
-    if not is_running():
-        console.print("[red]Daemon not running.[/red]")
-        raise typer.Exit(code=1)
-
+    """Show visual health for the current project memory."""
     try:
-        resp = requests.get(f"{URL}/v1/health", timeout=5, headers=_daemon_headers())
-        _raise_for_status(resp)
-        data = resp.json()
-        console.print("[bold blue]Daemon Health[/bold blue]")
-        console.print(f"  Status: [green]{data.get('status', 'unknown')}[/green]")
-        console.print(f"  Version: [cyan]{data.get('version', 'unknown')}[/cyan]")
-        console.print(f"  Auth Enabled: [cyan]{data.get('auth_enabled', False)}[/cyan]")
+        ws = _ensure_workspace(auto_create=True, announce=True)
+        workspace_id = get_workspace_id()
+        daemon_running = is_running()
+
+        if daemon_running:
+            status_resp = requests.get(
+                f"{URL}/v1/status",
+                params={"workspace_id": workspace_id},
+                timeout=10,
+                headers=_daemon_headers(),
+            )
+            _raise_for_status(status_resp)
+            data = _response_data(status_resp.json())
+            _render_health(
+                initialized=bool(data.get("initialized", True)),
+                daemon_running=True,
+                workspace_id=data.get("workspace_id", workspace_id),
+                root=data.get("workspace_root", str(ws.root)),
+                stats=data.get("stats", {}),
+            )
+            return
+
+        service = get_service()
+        diag = service.get_diagnostics(workspace_id)
+        _render_health(
+            initialized=ws.is_initialized(),
+            daemon_running=False,
+            workspace_id=workspace_id,
+            root=str(ws.root),
+            stats=diag.get("db_stats", {}),
+            runtime=diag.get("runtime", {}),
+        )
     except Exception as e:
         console.print(f"[bold red]Health check failed:[/bold red] {e}")
         raise typer.Exit(code=1)
@@ -312,7 +412,7 @@ def add(
     confidence: float = typer.Option(1.0, "--confidence", "-c", min=0, max=1, help="Certainty of this memory."),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")
 ):
-    """Add a new memory fact (Write-Time Embedding)."""
+    """Remember something the project agent should retain."""
     _add_memory(content, importance, confidence, workspace)
 
 @app.command("remember")
@@ -322,38 +422,58 @@ def remember(
     confidence: float = typer.Option(1.0, "--confidence", "-c", min=0, max=1, help="Certainty of this memory."),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")
 ):
-    """Alias for `memk add`."""
+    """Remember something the project agent should retain."""
     _add_memory(content, importance, confidence, workspace)
+
+def _search_results(query: str, limit: int, workspace: Optional[str]) -> List[Dict[str, Any]]:
+    """Shared implementation for recall/search commands."""
+    _ensure_workspace(auto_create=True, announce=False)
+    workspace_id = workspace or get_workspace_id()
+    if is_running():
+        resp = _post_v1("search", {"query": query, "limit": limit, "workspace_id": workspace_id})
+        return _response_data(resp).get("results", [])
+
+    service = get_service()
+    import asyncio
+    resp = asyncio.run(service.search(query, limit, workspace_id))
+    return resp.get("results", [])
+
+def _render_search_results(query: str, results: List[Dict[str, Any]]) -> None:
+    table = Table(title=f"Memory Recall: '{query}'")
+    table.add_column("Type", style="dim")
+    table.add_column("Content", style="cyan")
+    table.add_column("Score", justify="right")
+
+    for r in results:
+        table.add_row(r["item_type"], r["content"], f"{r['score']:.3f}")
+
+    console.print(table)
 
 @app.command()
 def search(
-    query: str, 
+    query: str,
     limit: int = typer.Option(10, "--limit", "-l", help="Number of results."),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")
 ):
-    """Retrieve memories using in-memory vector search."""
-    workspace_id = workspace or get_workspace_id()
+    """Search project memory."""
     try:
-        if is_running():
-            resp = _post_v1("search", {"query": query, "limit": limit, "workspace_id": workspace_id})
-            results = _response_data(resp).get("results", [])
-        else:
-            service = get_service()
-            import asyncio
-            resp = asyncio.run(service.search(query, limit, workspace_id))
-            results = resp.get("results", [])
-
-        table = Table(title=f"Search Results for: '{query}'")
-        table.add_column("Type", style="dim")
-        table.add_column("Content", style="cyan")
-        table.add_column("Score", justify="right")
-
-        for r in results:
-            table.add_row(r["item_type"], r["content"], f"{r['score']:.3f}")
-        
-        console.print(table)
+        _render_search_results(query, _search_results(query, limit, workspace))
     except Exception as e:
         console.print(f"[bold red]Search failed:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+@app.command("recall")
+def recall(
+    query: str,
+    limit: int = typer.Option(10, "--limit", "-l", help="Number of results."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")
+):
+    """Recall project memory for an AI agent or developer."""
+    try:
+        _render_search_results(query, _search_results(query, limit, workspace))
+    except Exception as e:
+        console.print(f"[bold red]Recall failed:[/bold red] {e}")
+        raise typer.Exit(code=1)
 
 @app.command()
 def context(
@@ -363,6 +483,7 @@ def context(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")
 ):
     """Compile optimized RAG context for AI agents."""
+    _ensure_workspace(auto_create=True, announce=False)
     workspace_id = workspace or get_workspace_id()
     try:
         if is_running():

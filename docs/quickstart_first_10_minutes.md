@@ -1,6 +1,6 @@
 # First 10 Minutes With MemoryKernel
 
-This guide starts from a fresh clone and ends with a working memory search.
+This guide starts from a fresh clone and ends with a working memory recall.
 
 ## 1. Install
 
@@ -16,39 +16,40 @@ Check the CLI:
 memk --help
 ```
 
-## 2. Initialize A Workspace
+## 2. Use The Three Core Commands
 
 Run this inside the project you want MemoryKernel to remember:
 
 ```bash
 cd /path/to/your/project
-memk init
+memk remember "The billing service uses Stripe test mode in local development"
+memk recall "billing provider"
+memk health
 ```
 
-This creates local state under `.memk/`. Do not commit that directory.
+MemoryKernel auto-creates local state under `.memk/` on first use. Do not commit
+that directory.
 
-## 3. Add Memory
-
-```bash
-memk add "The billing service uses Stripe test mode in local development"
-```
-
-`memk remember` is an alias for the same operation:
-
-```bash
-memk remember "The frontend dev server runs on port 5173"
-```
-
-## 4. Search Memory
-
-```bash
-memk search "billing provider"
-```
-
-Build a compact context block for an agent or LLM prompt:
+## 3. Build Agent Context
 
 ```bash
 memk context "What should I know before editing billing?"
+```
+
+## 4. Optional MCP Setup
+
+```bash
+memk-mcp
+```
+
+Then add it to your AI tool. See [Agent Setup](./agent_setup.md).
+
+Useful prompts:
+
+```text
+Remember: the frontend dev server runs on port 5173.
+Recall what we know about billing.
+Run memk_health and summarize memory status.
 ```
 
 ## 5. Use The Python SDK
@@ -77,7 +78,7 @@ In another terminal:
 
 ```bash
 memk status
-memk doctor
+memk health
 ```
 
 If you set `MEMK_API_TOKEN`, the CLI and SDK will use it automatically from the

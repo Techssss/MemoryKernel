@@ -1,7 +1,7 @@
 [project]
 name = "memk"
 version = "0.1.0"
-description = "Local-first memory infrastructure library for AI agents."
+description = "Project memory that AI agents can carry across sessions."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -36,6 +36,7 @@ dev = [
 
 [project.scripts]
 memk = "memk.cli.main:app"
+memk-mcp = "memk.mcp.server:main"
 
 [project.urls]
 Homepage = "https://github.com/Techssss/MemoryKernel"

@@ -36,11 +36,11 @@ context from the maintainer.
   before publishing to PyPI.
 - [x] Add release workflow for the Node SDK, with manual approval before npm
   publish.
-- [x] Add smoke tests that install the built wheel and run `memk --help`,
-  `memk add`, `memk search`, and the Python SDK quickstart.
+- [x] Add smoke tests that install the built wheel and run the core CLI help
+  surface, `memk-mcp --help`, and the Python SDK quickstart.
 - [x] Replace static coverage claims with real `pytest --cov` reporting.
 - [x] Publish a minimal "first 10 minutes" quickstart that starts from an empty
-  machine and ends with a successful memory search.
+  machine and ends with a successful memory recall.
 - [x] Add a troubleshooting page for dependency installs, local model downloads,
   SQLite permissions, and daemon startup issues.
 - [x] Add a compatibility matrix for Python versions, OS support, and optional
@@ -109,3 +109,5 @@ Acceptance criteria:
 - [ ] Add optional OpenTelemetry instrumentation.
 - [ ] Add a public roadmap grouped by beta, stable, and enterprise-oriented
   capabilities.
+- [ ] Expand MCP server beyond the four starter tools once CLI/API parity is
+  complete.
