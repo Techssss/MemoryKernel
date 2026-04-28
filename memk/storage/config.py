@@ -53,7 +53,13 @@ def configure_connection(conn: sqlite3.Connection, config: Optional[DatabaseConf
         config: Configuration settings (uses defaults if None)
     """
     if config is None:
-        config = DatabaseConfig()
+        from memk.core.profile import get_performance_profile
+
+        profile = get_performance_profile()
+        config = DatabaseConfig(
+            cache_size=profile.sqlite_cache_size,
+            mmap_size=profile.sqlite_mmap_size,
+        )
     
     try:
         # Enable WAL mode

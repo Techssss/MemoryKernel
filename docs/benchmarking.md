@@ -33,6 +33,20 @@ Benchmarks use deterministic synthetic data and a lightweight deterministic
 embedder. This makes runs repeatable and avoids model downloads in constrained
 environments.
 
+## Performance Profiles
+
+MemoryKernel has three runtime profiles:
+
+- `MEMK_PROFILE=lite` is the default. It uses SQLite FTS5 candidate search,
+  hashing rerank, smaller SQLite cache settings, lazy background workers, and no
+  RAM vector or graph index unless explicitly enabled.
+- `MEMK_PROFILE=balanced` keeps the candidate-first path but uses a larger
+  candidate set.
+- `MEMK_PROFILE=quality` is opt-in for heavier semantic model stacks.
+
+`MEMK_INDEX_MODE=ram` enables the warm RAM vector index path. Leave it unset for
+low-RAM local agent workflows.
+
 Valid claims:
 
 - Relative ingestion and retrieval latency for the current code path.

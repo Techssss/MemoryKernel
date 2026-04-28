@@ -15,7 +15,7 @@ from dataclasses import dataclass
 logger = logging.getLogger("memk.migrations")
 
 # Current schema version
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 
 @dataclass
 class Migration:
@@ -399,6 +399,67 @@ def migrate_v12_to_v13(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_hlc ON facts(version_hlc DESC)")
 
 
+def migrate_v13_to_v14(conn: sqlite3.Connection):
+    """Add FTS5 indexes for low-RAM candidate-first retrieval."""
+    try:
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
+            USING fts5(content, content='memories', content_rowid='rowid')
+        """)
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts
+            USING fts5(subject, predicate, object, content='facts', content_rowid='rowid')
+        """)
+    except sqlite3.OperationalError as exc:
+        logger.warning("FTS5 unavailable; lexical search will use LIKE fallback: %s", exc)
+        return
+
+    conn.executescript("""
+        CREATE TRIGGER IF NOT EXISTS memories_fts_ai
+        AFTER INSERT ON memories BEGIN
+            INSERT INTO memories_fts(rowid, content)
+            VALUES (new.rowid, new.content);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS memories_fts_ad
+        AFTER DELETE ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, content)
+            VALUES ('delete', old.rowid, old.content);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS memories_fts_au
+        AFTER UPDATE OF content ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, content)
+            VALUES ('delete', old.rowid, old.content);
+            INSERT INTO memories_fts(rowid, content)
+            VALUES (new.rowid, new.content);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS facts_fts_ai
+        AFTER INSERT ON facts BEGIN
+            INSERT INTO facts_fts(rowid, subject, predicate, object)
+            VALUES (new.rowid, new.subject, new.predicate, new.object);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS facts_fts_ad
+        AFTER DELETE ON facts BEGIN
+            INSERT INTO facts_fts(facts_fts, rowid, subject, predicate, object)
+            VALUES ('delete', old.rowid, old.subject, old.predicate, old.object);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS facts_fts_au
+        AFTER UPDATE OF subject, predicate, object ON facts BEGIN
+            INSERT INTO facts_fts(facts_fts, rowid, subject, predicate, object)
+            VALUES ('delete', old.rowid, old.subject, old.predicate, old.object);
+            INSERT INTO facts_fts(rowid, subject, predicate, object)
+            VALUES (new.rowid, new.subject, new.predicate, new.object);
+        END;
+    """)
+
+    conn.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
+    conn.execute("INSERT INTO facts_fts(facts_fts) VALUES ('rebuild')")
+
+
 # ---------------------------------------------------------------------------
 # Migration Registry
 # ---------------------------------------------------------------------------
@@ -417,6 +478,7 @@ MIGRATIONS: List[Migration] = [
     Migration(11, "Add conflict record table", migrate_v10_to_v11),
     Migration(12, "Add resolved_ts to conflict_record", migrate_v11_to_v12),
     Migration(13, "Add HLC sync fields to facts", migrate_v12_to_v13),
+    Migration(14, "Add FTS5 indexes for candidate-first retrieval", migrate_v13_to_v14),
 ]
 
 

@@ -687,7 +687,10 @@ def get_default_embedder() -> BaseEmbedder:
     """
     global _DEFAULT_EMBEDDER
     if _DEFAULT_EMBEDDER is None:
-        mode = os.getenv("MEMK_EMBEDDER", "auto").strip().lower()
+        from memk.core.profile import get_performance_profile
+
+        profile = get_performance_profile()
+        mode = os.getenv("MEMK_EMBEDDER", profile.default_embedder).strip().lower()
         aliases = {
             "sentence-transformers": "sentence",
             "sentencetransformers": "sentence",

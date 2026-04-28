@@ -19,7 +19,7 @@ from memk.core.embedder import (
     get_default_embedder, get_default_pipeline,
     BaseEmbedder, EmbeddingPipeline, decode_embedding,
 )
-from memk.retrieval.retriever import ScoredRetriever
+from memk.retrieval.retriever import CandidateFirstRetriever, ScoredRetriever
 from memk.context.builder import ContextBuilder
 from memk.extraction.extractor import RuleBasedExtractor
 from memk.retrieval.index import VectorIndex, IndexEntry
@@ -27,6 +27,7 @@ from memk.core.cache import MemoryCacheManager
 from memk.core.jobs import BackgroundJobManager
 from memk.storage.graph_repository import GraphRepository
 from memk.core.graph_index import GraphIndex
+from memk.core.profile import get_performance_profile
 
 logger = logging.getLogger("memk.runtime")
 
@@ -45,19 +46,27 @@ class WorkspaceRuntime:
         self.db_path = db_path
         self._raw_embedder = embedder
         self.workspace_manager = workspace_manager
+        self.profile = get_performance_profile()
         
         self.db: MemoryDB = MemoryDB(db_path=db_path)
         self.db.init_db()
         
-        self.index = VectorIndex(dim=embedder.dim)
+        self.index = VectorIndex(dim=embedder.dim) if self.profile.use_ram_index else None
         self.cache = MemoryCacheManager()
-        self.jobs = BackgroundJobManager()
+        self.jobs = BackgroundJobManager(start_immediately=not self.profile.lazy_job_workers)
         
         # High-level services (linked to this workspace's state)
-        self.retriever = ScoredRetriever(
-            self.db, embedder=self._raw_embedder,
-            index=self.index, cache=self.cache,
-        )
+        if self.profile.use_ram_index:
+            self.retriever = ScoredRetriever(
+                self.db, embedder=self._raw_embedder,
+                index=self.index, cache=self.cache,
+            )
+        else:
+            self.retriever = CandidateFirstRetriever(
+                self.db,
+                embedder=self._raw_embedder,
+                candidate_limit=self.profile.fts_candidate_limit,
+            )
         self.builder = ContextBuilder()
         self.extractor = self._create_extractor()
         
@@ -73,12 +82,15 @@ class WorkspaceRuntime:
             current_gen = self.workspace_manager.get_generation()
             self.cache.set_generation(current_gen)
         
-        self._hydrate_index()
+        if self.profile.use_ram_index:
+            self._hydrate_index()
         self.refresh_graph_index()
 
-    @staticmethod
-    def _create_extractor():
+    def _create_extractor(self):
         """Create best available extractor: SpaCyExtractor > RuleBasedExtractor."""
+        if not self.profile.enable_spacy:
+            logger.info("Using RuleBasedExtractor (spaCy disabled by performance profile)")
+            return RuleBasedExtractor()
         try:
             from memk.extraction.spacy_extractor import SpaCyExtractor
             ext = SpaCyExtractor()
@@ -93,6 +105,9 @@ class WorkspaceRuntime:
 
     def _create_graph_repo(self):
         """Create GraphRepository if V5 schema tables exist, otherwise None."""
+        if not self.profile.enable_graph_index:
+            logger.info(f"[{self.workspace_id}] Graph repository disabled by performance profile")
+            return None
         try:
             import sqlite3
             conn = sqlite3.connect(self.db_path)
@@ -153,6 +168,9 @@ class WorkspaceRuntime:
 
     def _hydrate_index(self):
         """Load project-specific embeddings into the isolated RAM index."""
+        if self.index is None:
+            self.telemetry.index_size = 0
+            return
         facts = self.db.get_all_active_facts()
         for r in facts:
             if r["embedding"]:
@@ -191,7 +209,9 @@ class WorkspaceRuntime:
         return {
             "workspace_id": self.workspace_id,
             "generation": self.get_generation(),
-            "index_entries": len(self.index),
+            "profile": self.profile.as_dict(),
+            "index_entries": len(self.index) if self.index is not None else 0,
+            "index_mode": self.profile.index_mode,
             "graph": graph_stats,
             "cache": self.cache.get_stats(),
             "active_jobs": len([j for j in self.jobs.jobs.values() if j.status == "running"]),
@@ -213,6 +233,7 @@ class RuntimeManager:
         self.global_telemetry = {
             "model_load_time_ms": 0.0,
             "total_workspaces_active": 0,
+            "performance_profile": get_performance_profile().name,
         }
 
     @classmethod
@@ -234,6 +255,7 @@ class RuntimeManager:
         self.embedder_pipeline.embed("warmup")
         
         self.global_telemetry["model_load_time_ms"] = (time.perf_counter() - start) * 1000
+        self.global_telemetry["performance_profile"] = get_performance_profile().name
         self._is_global_initialized = True
         logger.info(f"Global Infrastructure READY. Shared model loaded in {self.global_telemetry['model_load_time_ms']:.0f}ms.")
 

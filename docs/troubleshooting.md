@@ -25,24 +25,35 @@ model-specific behavior:
 python -m pytest -q -rs tests
 ```
 
-## Model Loading Is Slow
+## Model Loading Or RAM Use Is High
 
-Use the deterministic hashing embedder for fast startup:
+Use the default low-memory profile for fast startup:
 
 ```bash
-export MEMK_EMBEDDER=hashing
+export MEMK_PROFILE=lite
+export MEMK_INDEX_MODE=sqlite
 ```
 
 On PowerShell:
 
 ```powershell
-$env:MEMK_EMBEDDER = "hashing"
+$env:MEMK_PROFILE = "lite"
+$env:MEMK_INDEX_MODE = "sqlite"
 ```
 
-For stronger semantic recall, install `.[semantic]` and leave
-`MEMK_EMBEDDER=auto` or set `MEMK_EMBEDDER=semantic`. `auto` tries the semantic
-model first and falls back to deterministic hashing if the model stack is not
-available.
+`lite` uses SQLite FTS5 candidate search plus deterministic hashing rerank. It
+does not load torch, sentence-transformers, scikit-learn, spaCy, the RAM vector
+index, or the graph sidecar by default.
+
+For stronger semantic recall, install `.[semantic]` and opt in explicitly:
+
+```bash
+export MEMK_PROFILE=quality
+export MEMK_EMBEDDER=semantic
+```
+
+Set `MEMK_INDEX_MODE=ram` only when you want the daemon to keep a warm in-memory
+vector index.
 
 ## spaCy Tests Are Skipped
 

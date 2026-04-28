@@ -121,12 +121,14 @@ def _render_health(
 
     lines = [
         f"Grade: [{grade_color}]{grade}[/{grade_color}]",
+        f"Profile: [cyan]{stats.get('performance_profile', 'lite')}[/cyan] ({stats.get('index_mode', 'sqlite')})",
         f"Workspace: [cyan]{root}[/cyan]",
         f"Brain ID: [magenta]{workspace_id[:12]}[/magenta]",
         f"Daemon: [{'green' if daemon_running else 'yellow'}]{'running' if daemon_running else 'not running'}[/]",
         f"Memories: [cyan]{total_memories}[/cyan]",
         f"Facts: [cyan]{total_facts}[/cyan]",
         f"Embedded: [cyan]{total_embedded}/{total_items}[/cyan] ({embed_pct:.1f}%)",
+        f"FTS: [{'green' if stats.get('fts_available', False) else 'yellow'}]{'available' if stats.get('fts_available', False) else 'fallback'}[/]",
         f"Database: [cyan]{float(stats.get('database_size_mb', 0) or 0):.2f} MB[/cyan]",
     ]
     if runtime:
@@ -647,6 +649,8 @@ def doctor(workspace: Optional[str] = typer.Option(None, "--workspace", "-w", he
         # Database Section
         console.print("[bold]💾 Database[/bold]")
         console.print(f"  Schema Version: [cyan]{stats.get('schema_version', 'unknown')}[/cyan]")
+        console.print(f"  Profile: [cyan]{stats.get('performance_profile', 'lite')}[/cyan] ({stats.get('index_mode', 'sqlite')})")
+        console.print(f"  FTS: [{'green' if stats.get('fts_available', False) else 'yellow'}]{'available' if stats.get('fts_available', False) else 'fallback'}[/]")
         console.print(f"  Journal Mode: [cyan]{stats.get('journal_mode', 'unknown').upper()}[/cyan]")
         console.print(f"  Database Size: [cyan]{stats.get('database_size_mb', 0):.2f} MB[/cyan]")
         if stats.get('wal_size_mb', 0) > 0:

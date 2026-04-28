@@ -22,12 +22,15 @@ Optional: install the semantic model stack for stronger recall quality:
 
 ```bash
 python -m pip install -e ".[semantic]"
+export MEMK_PROFILE=quality
 ```
 
-If you want the fastest deterministic startup, keep the base install or set:
+The base install defaults to `MEMK_PROFILE=lite`: SQLite FTS5 candidate search,
+deterministic hashing rerank, and no RAM vector index. To force it explicitly:
 
 ```bash
-export MEMK_EMBEDDER=hashing
+export MEMK_PROFILE=lite
+export MEMK_INDEX_MODE=sqlite
 ```
 
 ## 2. Use The Three Core Commands

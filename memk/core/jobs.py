@@ -54,7 +54,7 @@ class BackgroundJobManager:
     Production-ready job scheduler with priority queue and resource limits.
     Supports cancellation, progress tracking, and non-blocking execution.
     """
-    def __init__(self, max_history: int = 50, max_workers: int = 2):
+    def __init__(self, max_history: int = 50, max_workers: int = 2, start_immediately: bool = True):
         self.jobs: Dict[str, JobRecord] = {}
         self.history: List[str] = []
         self.max_history = max_history
@@ -64,8 +64,14 @@ class BackgroundJobManager:
         self._workers: List[threading.Thread] = []
         self._shutdown = False
         
-        # Start worker threads
-        for i in range(max_workers):
+        if start_immediately:
+            self._ensure_workers()
+
+    def _ensure_workers(self):
+        """Start worker threads on first use when configured for lazy startup."""
+        if self._workers or self.max_workers <= 0:
+            return
+        for i in range(self.max_workers):
             worker = threading.Thread(target=self._worker_loop, args=(i,), daemon=True)
             worker.start()
             self._workers.append(worker)
@@ -89,6 +95,7 @@ class BackgroundJobManager:
                     del self.jobs[old_id]
         
         # Add to priority queue
+        self._ensure_workers()
         self._queue.put((priority.value, job.id, func, args, kwargs))
         logger.info(f"Job {job.id} ({job_type}) queued with priority {priority.name}")
         return job.id

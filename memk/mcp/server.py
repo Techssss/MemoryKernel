@@ -20,6 +20,7 @@ import sys
 from typing import Any, BinaryIO, Optional
 
 from memk import __version__
+from memk.core.profile import get_performance_profile
 from memk.core.service import MemoryKernelService
 
 
@@ -147,6 +148,7 @@ def _light_diagnostics(workspace_id: Optional[str] = None) -> tuple[dict[str, An
     return {
         "db_stats": db.get_stats(),
         "runtime": {"index_entries": "not loaded", "active_jobs": 0},
+        "performance": get_performance_profile().as_dict(),
     }, resolved_workspace_id
 
 
@@ -190,9 +192,11 @@ def _format_health(diag: dict[str, Any], workspace_id: str) -> str:
         [
             f"Grade: {grade}",
             f"Workspace: {workspace_id}",
+            f"Profile: {stats.get('performance_profile', 'lite')} ({stats.get('index_mode', 'sqlite')})",
             f"Memories: {total_memories}",
             f"Facts: {total_facts}",
             f"Embedded: {embedded}/{total_items} ({embed_pct:.1f}%)",
+            f"FTS: {'available' if stats.get('fts_available', False) else 'fallback'}",
             f"Database MB: {float(stats.get('database_size_mb', 0) or 0):.2f}",
             f"Index entries: {runtime.get('index_entries', 0)}",
             f"Next action: {next_action}",

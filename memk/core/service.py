@@ -93,16 +93,20 @@ class MemoryKernelService:
                 )
 
             # 3. Sync to RAM index (Workspace specific)
-            with tc.span("index_sync"):
-                now_str = datetime.datetime.now().isoformat()
-                runtime.index.add_entry(
-                    IndexEntry(
-                        id=mem_id, item_type="memory", content=content,
-                        importance=importance, confidence=confidence,
-                        created_at=now_str, decay_score=1.0, access_count=0,
-                    ),
-                    emb,
-                )
+            now_str = datetime.datetime.now().isoformat()
+            if runtime.index is not None:
+                with tc.span("index_sync"):
+                    runtime.index.add_entry(
+                        IndexEntry(
+                            id=mem_id, item_type="memory", content=content,
+                            importance=importance, confidence=confidence,
+                            created_at=now_str, decay_score=1.0, access_count=0,
+                        ),
+                        emb,
+                    )
+            else:
+                with tc.span("index_sync_skipped", index_mode=runtime.profile.index_mode):
+                    pass
 
             with tc.span("extract_facts"):
                 facts = runtime.extractor.extract_facts(content)
@@ -126,14 +130,15 @@ class MemoryKernelService:
                                 importance=importance, confidence=confidence,
                             )
                             t_str = f"{f.subject} {f.relation} {f.object}"
-                            runtime.index.add_entry(
-                                IndexEntry(
-                                    id=f_id, item_type="fact", content=t_str,
-                                    importance=importance, confidence=confidence,
-                                    created_at=now_str, decay_score=1.0, access_count=0,
-                                ),
-                                f_emb,
-                            )
+                            if runtime.index is not None:
+                                runtime.index.add_entry(
+                                    IndexEntry(
+                                        id=f_id, item_type="fact", content=t_str,
+                                        importance=importance, confidence=confidence,
+                                        created_at=now_str, decay_score=1.0, access_count=0,
+                                    ),
+                                    f_emb,
+                                )
                             extracted.append({"id": f_id, "triplet": t_str})
 
             # 5. Graph enrichment — entities, mentions, edges
@@ -282,20 +287,22 @@ class MemoryKernelService:
                 cache_hit = True
                 serialized = cached
             else:
-                # Layer 2: Embed via global pipeline
+                # Layer 2: Embed only for RAM-index retrieval. Candidate-first
+                # retrieval embeds inside the small rerank set.
                 q_vec = None
-                if tc.elapsed_ms() < SOFT_LIMIT_MS:
+                if runtime.index is not None and tc.elapsed_ms() < SOFT_LIMIT_MS:
                     with tc.span("embed", query_len=len(query)):
                         try:
                             q_fut = self.global_runtime.embedder_pipeline.embed_async(query)
                             q_vec = await asyncio.wrap_future(q_fut)
                         except (RuntimeError, AttributeError):
                             q_vec = self.global_runtime.shared_embedder.embed(query)
-                else:
+                elif runtime.index is not None:
                     tc.mark_degraded("skipped embedding (latency budget)")
 
                 # Layer 3: RAM index search
-                with tc.span("retrieve", index_size=len(runtime.index)):
+                index_size = len(runtime.index) if runtime.index is not None else 0
+                with tc.span("retrieve", index_size=index_size):
                     max_candidates = min(limit * 3, MAX_CANDIDATES)
                     results = self._retrieve_with_deadline(
                         tc, runtime, query, q_vec, limit, max_candidates,
@@ -359,7 +366,7 @@ class MemoryKernelService:
                 context_str = cached
             else:
                 q_vec = None
-                if tc.elapsed_ms() < SOFT_LIMIT_MS:
+                if runtime.index is not None and tc.elapsed_ms() < SOFT_LIMIT_MS:
                     with tc.span("embed", query_len=len(query)):
                         try:
                             q_fut = self.global_runtime.embedder_pipeline.embed_async(query)
@@ -367,7 +374,8 @@ class MemoryKernelService:
                         except (RuntimeError, AttributeError):
                             q_vec = self.global_runtime.shared_embedder.embed(query)
 
-                with tc.span("retrieve", index_size=len(runtime.index)):
+                index_size = len(runtime.index) if runtime.index is not None else 0
+                with tc.span("retrieve", index_size=index_size):
                     max_candidates = min(MAX_RETURN_LIMIT * 3, MAX_CANDIDATES)
                     all_items = self._retrieve_with_deadline(
                         tc, runtime, query, q_vec, MAX_RETURN_LIMIT, max_candidates,
@@ -420,6 +428,7 @@ class MemoryKernelService:
         
         return {
             "db_stats": stats,
+            "performance": runtime.profile.as_dict(),
             "memory_health": states,
             "sync_health": {
                 "oplog_count": sync_stats.get("oplog", {}).get("count", 0),
@@ -457,7 +466,7 @@ class MemoryKernelService:
     def _retrieve_with_deadline(self, tc, runtime, query, q_vec, limit, max_candidates):
         from memk.retrieval.retriever import RetrievedItem
 
-        if runtime.index and len(runtime.index) > 0:
+        if runtime.index is not None and len(runtime.index) > 0:
             with tc.span("index_search", max_candidates=max_candidates):
                 if q_vec is not None:
                     index_hits = runtime.index.search(q_vec, top_k=max_candidates)
@@ -483,5 +492,6 @@ class MemoryKernelService:
             with tc.span("rank", candidates=len(index_hits)):
                 graph_idx = getattr(runtime, "graph_index", None)
                 return runtime.retriever.rank_candidates(query, q_vec, index_hits, limit, graph_index=graph_idx)
-        
-        return []
+
+        with tc.span("candidate_first", candidate_limit=max_candidates):
+            return runtime.retriever.retrieve(query, limit=limit)

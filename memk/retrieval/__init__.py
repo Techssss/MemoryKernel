@@ -2,7 +2,18 @@
 memk.retrieval — Retrieval layer public API.
 """
 
-from .retriever import KeywordRetriever, HybridRetriever, ScoredRetriever, RetrievedItem
+from .retriever import (
+    CandidateFirstRetriever,
+    HybridRetriever,
+    KeywordRetriever,
+    RetrievedItem,
+    ScoredRetriever,
+)
 
-__all__ = ["KeywordRetriever", "HybridRetriever", "ScoredRetriever", "RetrievedItem"]
-
+__all__ = [
+    "CandidateFirstRetriever",
+    "KeywordRetriever",
+    "HybridRetriever",
+    "ScoredRetriever",
+    "RetrievedItem",
+]

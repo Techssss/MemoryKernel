@@ -146,7 +146,7 @@ class DependencyContainer:
         # Index factory
         def index_factory(workspace_id: str) -> IndexProtocol:
             from memk.retrieval.index import VectorIndex
-            return VectorIndex(dim=self.config.embedder_dim)
+            return VectorIndex(dim=self.get_embedder().dim)
         
         # Cache factory
         def cache_factory(workspace_id: str) -> CacheProtocol:

@@ -90,6 +90,66 @@ Acceptance criteria:
 - Breaking changes are documented and versioned.
 - Common user failures return actionable errors.
 
+## P2.5 - Fast, Low-RAM Defaults
+
+Goal: make MemoryKernel feel instant for local agent workflows without forcing
+heavy model downloads, high idle memory, or long daemon warmup.
+
+Default product stance:
+
+- `lite` is the default profile for new users.
+- `balanced` improves recall quality while staying local and modest.
+- `quality` is opt-in for heavier semantic models or advanced vector search.
+
+Implementation plan:
+
+- [x] Choose the default performance strategy: SQLite FTS5 candidate search,
+  lightweight hashing rerank, and metadata scoring before any heavy semantic
+  model path.
+- [x] Add `MEMK_PROFILE=lite|balanced|quality` and expose the active profile in
+  `memk health`, MCP `memk_health`, and daemon diagnostics.
+- [x] Add SQLite FTS5 indexes for `memories.content` and active fact text,
+  using external-content tables or triggers so writes stay simple and search
+  stays fast.
+- [x] Add a candidate-first retriever:
+  1. FTS5 gets top 100-300 candidates.
+  2. Hashing embedder reranks only those candidates.
+  3. Existing importance, recency, confidence, and fact boosts produce the final
+     score.
+- [x] Make the candidate-first retriever the default in `lite` and `balanced`
+  profiles.
+- [x] Keep full RAM vector indexing behind `MEMK_INDEX_MODE=ram`, not as the
+  default path.
+- [x] Lazy-load or gate graph index hydration so `recall` does not load the full
+  graph sidecar unless graph expansion is enabled for the profile.
+- [x] Lazy-start background job workers only when the first background job is
+  submitted.
+- [x] Keep spaCy disabled by default in `lite`; enable only through `.[nlp]` and
+  an explicit profile/config switch.
+- [x] Add low-memory SQLite pragmas for `lite`, including a smaller cache and
+  mmap setting than the current production defaults.
+- [ ] Add a benchmark target for 10k and 50k synthetic memories that reports:
+  cold startup, FTS candidate latency, rerank latency, end-to-end recall p50/p95,
+  RSS delta, and index build cost.
+- [x] Add regression tests proving lite runtime does not load RAM indexes, graph
+  indexes, or worker threads until they are needed.
+- [x] Document performance modes in README, `docs/benchmarking.md`, and
+  troubleshooting docs.
+- [ ] Evaluate optional vector backends after the FTS path lands:
+  `sqlite-vec`/SQLite `vec1` for local vector search, and `fastembed` for a
+  lighter semantic model stack.
+
+Performance targets:
+
+- `lite` should use no torch, sentence-transformers, scikit-learn, or spaCy by
+  default.
+- `lite` recall on 50k synthetic memories should target sub-20ms p95
+  end-to-end on a warm local process.
+- Added runtime memory for 50k memories should stay close to candidate/cache
+  size rather than scaling with all stored vectors.
+- Daemon cold start should not hydrate every embedding by default.
+- `quality` mode can spend more CPU/RAM, but must be explicit and documented.
+
 ## P3 - Reach 90%+: Commercial-Grade Product
 
 Goal: make the project credible for long-running, multi-user, or team usage.

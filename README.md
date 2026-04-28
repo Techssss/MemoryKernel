@@ -49,21 +49,25 @@ memk guide
 ```
 
 Base install is intentionally lightweight. It does not require torch,
-sentence-transformers, scikit-learn, or spaCy. MemoryKernel falls back to a
-deterministic local embedder so setup works offline. In `auto` mode, it uses the
-semantic model when installed and otherwise uses hashing.
+sentence-transformers, scikit-learn, or spaCy. The default `lite` profile uses
+SQLite FTS5 candidate search plus a deterministic hashing reranker, so setup
+works offline and does not hydrate the whole vector index into RAM.
 
 For stronger semantic recall, install the optional model stack:
 
 ```bash
 python -m pip install -e ".[semantic]"
+export MEMK_PROFILE=quality
 ```
 
-If model startup is slow or you want deterministic low-memory mode:
+Performance profiles:
 
-```bash
-export MEMK_EMBEDDER=hashing
-```
+- `MEMK_PROFILE=lite` (default): fastest startup, low RAM, hashing rerank.
+- `MEMK_PROFILE=balanced`: same low-RAM retrieval with a larger candidate set.
+- `MEMK_PROFILE=quality`: opt-in semantic stack when installed.
+
+Set `MEMK_INDEX_MODE=ram` only when you explicitly want the older RAM vector
+index path for warm daemon workloads.
 
 ## The Three Commands
 

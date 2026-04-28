@@ -41,11 +41,17 @@ def enhanced_extraction_job(
         try:
             if progress_callback:
                 progress_callback(0.2)
-                
+
+            repo = runtime.graph_repo
+            if repo is None:
+                if progress_callback:
+                    progress_callback(1.0)
+                logger.info(f"[{workspace_id}] Async extraction skipped for {memory_id[:8]}: graph disabled")
+                return {"status": "skipped", "reason": "graph_disabled", "memory_id": memory_id}
+
             # Perform advanced extraction via GLiNER
             extractor = _get_gliner()
             entities = extractor.extract_entities(text)
-            repo = runtime.graph_repo
             
             if repo and entities:
                 changed = False

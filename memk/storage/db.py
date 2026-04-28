@@ -22,6 +22,7 @@ import sqlite3
 import uuid
 import logging
 import json
+import re
 from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timezone
@@ -365,6 +366,27 @@ class MemoryDB:
         except sqlite3.Error as e:
             raise DatabaseError(f"search_memory failed: {e}") from e
 
+    def search_memory_fts(self, query: str, limit: int = 200) -> List[Dict[str, Any]]:
+        """Search memories through FTS5, falling back to LIKE if FTS is unavailable."""
+        fts_query = _fts_query(query)
+        if not fts_query:
+            return []
+
+        sql = """
+            SELECT memories.*, bm25(memories_fts) AS fts_rank
+            FROM memories_fts
+            JOIN memories ON memories_fts.rowid = memories.rowid
+            WHERE memories_fts MATCH ?
+            ORDER BY fts_rank
+            LIMIT ?
+        """
+        try:
+            with self.connection() as conn:
+                return [_to_dict(r) for r in conn.execute(sql, (fts_query, int(limit))).fetchall()]
+        except sqlite3.Error as exc:
+            logger.debug("FTS memory search unavailable, falling back to LIKE: %s", exc)
+            return self.search_memory(query)[:limit]
+
     def stream_all_memories(self):
         """Yield memory rows one by one to avoid large memory overhead."""
         try:
@@ -555,6 +577,27 @@ class MemoryDB:
                 return [_to_dict(r) for r in conn.execute(sql, params).fetchall()]
         except sqlite3.Error as e:
             raise DatabaseError(f"search_facts failed: {e}") from e
+
+    def search_facts_fts(self, query: str, limit: int = 200) -> List[Dict[str, Any]]:
+        """Search active facts through FTS5, falling back to LIKE if unavailable."""
+        fts_query = _fts_query(query)
+        if not fts_query:
+            return []
+
+        sql = """
+            SELECT facts.*, bm25(facts_fts) AS fts_rank
+            FROM facts_fts
+            JOIN facts ON facts_fts.rowid = facts.rowid
+            WHERE facts_fts MATCH ? AND facts.is_active = 1
+            ORDER BY fts_rank
+            LIMIT ?
+        """
+        try:
+            with self.connection() as conn:
+                return [_to_dict(r) for r in conn.execute(sql, (fts_query, int(limit))).fetchall()]
+        except sqlite3.Error as exc:
+            logger.debug("FTS fact search unavailable, falling back to LIKE: %s", exc)
+            return self.search_facts(keyword=query)[:limit]
 
     def stream_all_active_facts(self):
         """Yield active facts for large-scale hydration."""
@@ -871,6 +914,15 @@ class MemoryDB:
                 
                 # Get database info
                 db_info = get_database_info(conn)
+                from memk.core.profile import get_performance_profile
+
+                profile = get_performance_profile()
+                fts_available = bool(conn.execute(
+                    """
+                    SELECT COUNT(*) FROM sqlite_master
+                    WHERE type='table' AND name IN ('memories_fts', 'facts_fts')
+                    """
+                ).fetchone()[0] == 2)
 
                 return {
                     "total_memories":       scalar("SELECT COUNT(*) FROM memories"),
@@ -886,6 +938,9 @@ class MemoryDB:
                     "database_size_mb":     db_info.get("size_mb", 0),
                     "journal_mode":         db_info.get("journal_mode", "unknown"),
                     "wal_size_mb":          db_info.get("wal_size_mb", 0) if db_info.get("journal_mode") == "wal" else 0,
+                    "performance_profile":  profile.name,
+                    "index_mode":           profile.index_mode,
+                    "fts_available":        fts_available,
                 }
         except sqlite3.Error as e:
             raise DatabaseError(f"get_stats failed: {e}") from e
@@ -951,6 +1006,18 @@ def _decode_blob(blob: bytes) -> np.ndarray:
     import struct
     n = len(blob) // 4
     return np.array(struct.unpack(f"{n}f", blob), dtype=np.float32)
+
+
+def _fts_query(query: str) -> str:
+    """Convert user text into a safe FTS5 OR query."""
+    terms = re.findall(r"[A-Za-z0-9_]+", query.lower())
+    seen = set()
+    unique_terms = []
+    for term in terms:
+        if term not in seen:
+            unique_terms.append(term)
+            seen.add(term)
+    return " OR ".join(unique_terms)
 
 
 def _to_dict(row: sqlite3.Row) -> Dict[str, Any]:

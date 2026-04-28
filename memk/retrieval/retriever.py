@@ -249,7 +249,137 @@ class HybridRetriever:
 
 
 # ---------------------------------------------------------------------------
-# 3. ScoredRetriever — full 5-D scorer (v0.3, recommended)
+# 3. CandidateFirstRetriever — low-RAM FTS5 + lightweight rerank
+# ---------------------------------------------------------------------------
+
+class CandidateFirstRetriever:
+    """
+    Low-RAM retriever for local agent workflows.
+
+    Instead of hydrating every vector into RAM, this retriever asks SQLite FTS5
+    for a small candidate set, reranks only those candidates with the configured
+    embedder, then applies the existing metadata scorer.
+    """
+
+    def __init__(
+        self,
+        db: MemoryDB,
+        embedder=None,
+        weights: Optional[ScoringWeights] = None,
+        half_life_days: float = 30.0,
+        score_threshold: float = 0.0,
+        track_access: bool = True,
+        candidate_limit: int = 200,
+    ):
+        self.db = db
+        self._embedder = embedder
+        self.scorer = MemoryScorer(weights=weights, half_life_days=half_life_days)
+        self.score_threshold = score_threshold
+        self.track_access = track_access
+        self.candidate_limit = max(10, int(candidate_limit))
+
+    def retrieve(self, query: str, limit: int = 10) -> List[RetrievedItem]:
+        query = query.strip()
+        if not query:
+            return []
+
+        embedder = self._get_embedder()
+        q_vec = embedder.embed(query)
+
+        per_type_limit = max(limit, self.candidate_limit // 2)
+        fact_rows = self.db.search_facts_fts(query, limit=per_type_limit)
+        memory_rows = self.db.search_memory_fts(query, limit=per_type_limit)
+
+        results: List[RetrievedItem] = []
+        seen: set[tuple[str, str]] = set()
+
+        for row in fact_rows:
+            key = ("fact", row["id"])
+            if key in seen:
+                continue
+            seen.add(key)
+            content = f"{row['subject']} {row['predicate']} {row['object']}"
+            breakdown = self.scorer.score(
+                vector_similarity=_candidate_vector_score(
+                    q_vec, row.get("embedding"), content, embedder
+                ),
+                keyword_score=1.0,
+                importance=float(row.get("importance") or 0.5),
+                created_at=row["created_at"],
+                confidence=float(row.get("confidence") or 1.0),
+                is_fact=True,
+            )
+            if breakdown.final_score >= self.score_threshold:
+                results.append(RetrievedItem(
+                    item_type="fact",
+                    id=row["id"],
+                    content=content,
+                    created_at=row["created_at"],
+                    score=breakdown.final_score,
+                    importance=float(row.get("importance") or 0.5),
+                    confidence=float(row.get("confidence") or 1.0),
+                    access_count=int(row.get("access_count") or 0),
+                    decay_score=float(row.get("decay_score") or 1.0),
+                    breakdown=breakdown,
+                ))
+
+        for row in memory_rows:
+            key = ("memory", row["id"])
+            if key in seen:
+                continue
+            seen.add(key)
+            content = row["content"]
+            breakdown = self.scorer.score(
+                vector_similarity=_candidate_vector_score(
+                    q_vec, row.get("embedding"), content, embedder
+                ),
+                keyword_score=1.0,
+                importance=float(row.get("importance") or 0.5),
+                created_at=row["created_at"],
+                confidence=float(row.get("confidence") or 1.0),
+                is_fact=False,
+            )
+            if breakdown.final_score >= self.score_threshold:
+                results.append(RetrievedItem(
+                    item_type="memory",
+                    id=row["id"],
+                    content=content,
+                    created_at=row["created_at"],
+                    score=breakdown.final_score,
+                    importance=float(row.get("importance") or 0.5),
+                    confidence=float(row.get("confidence") or 1.0),
+                    access_count=int(row.get("access_count") or 0),
+                    decay_score=float(row.get("decay_score") or 1.0),
+                    breakdown=breakdown,
+                ))
+
+        results.sort(key=lambda x: (x.score, x.created_at), reverse=True)
+        top = results[:limit]
+
+        if self.track_access:
+            self._track(top)
+
+        return top
+
+    def _get_embedder(self):
+        if self._embedder is None:
+            from memk.core.embedder import get_default_embedder
+            self._embedder = get_default_embedder()
+        return self._embedder
+
+    def _track(self, items: List[RetrievedItem]) -> None:
+        for item in items:
+            try:
+                if item.item_type == "fact":
+                    self.db.touch_fact(item.id)
+                else:
+                    self.db.touch_memory(item.id)
+            except Exception as exc:
+                logger.warning(f"Access tracking failed for {item.id}: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# 4. ScoredRetriever — full 5-D scorer (v0.3, recommended)
 # ---------------------------------------------------------------------------
 
 class ScoredRetriever:
@@ -577,3 +707,23 @@ def _cosine_score(q_vec: np.ndarray, emb_blob: Optional[bytes]) -> float:
     except Exception as exc:
         logger.warning(f"cosine_score failed: {exc}")
         return 0.0
+
+
+def _candidate_vector_score(q_vec: np.ndarray, emb_blob: Optional[bytes], content: str, embedder) -> float:
+    """Score a candidate using a stored vector when dimensions match, else embed on demand."""
+    if emb_blob is not None and len(emb_blob) // 4 == int(q_vec.shape[0]):
+        return _cosine_score(q_vec, emb_blob)
+    try:
+        c_vec = embedder.embed(content)
+        return _cosine_vec_score(q_vec, c_vec)
+    except Exception as exc:
+        logger.debug("candidate vector scoring skipped: %s", exc)
+        return 0.0
+
+
+def _cosine_vec_score(q_vec: np.ndarray, c_vec: np.ndarray) -> float:
+    denom = np.linalg.norm(q_vec) * np.linalg.norm(c_vec)
+    if denom < 1e-10:
+        return 0.0
+    raw = float(np.dot(q_vec, c_vec) / denom)
+    return (raw + 1.0) / 2.0
