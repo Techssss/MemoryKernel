@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from memk.mcp.server import (
     TOOLS,
+    _call_tool,
     _ensure_workspace_id,
     _format_results,
     handle_request,
@@ -37,12 +38,14 @@ def test_mcp_tools_list_exposes_starter_tools():
     names = {tool["name"] for tool in response["result"]["tools"]}
 
     assert names == {
+        "memk_guide",
         "memk_remember",
         "memk_recall",
         "memk_context",
         "memk_health",
     }
-    assert TOOLS[0]["inputSchema"]["required"] == ["content"]
+    remember_tool = next(tool for tool in TOOLS if tool["name"] == "memk_remember")
+    assert remember_tool["inputSchema"]["required"] == ["content"]
 
 
 def test_mcp_unknown_tool_returns_json_rpc_error():
@@ -82,6 +85,35 @@ def test_mcp_workspace_auto_init_with_explicit_workspace_id(monkeypatch):
         assert workspace_id == "agent-workspace"
         assert (workspace / ".memk" / "manifest.json").exists()
         assert (workspace / ".memk" / "state" / "state.db").exists()
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_mcp_guide_returns_agent_usage_policy():
+    result = asyncio.run(_call_tool("memk_guide", {}))
+
+    text = result["content"][0]["text"]
+    assert "Use memk_remember after durable facts" in text
+    assert "Avoid storing temporary actions" in text
+
+
+def test_mcp_health_does_not_require_service_runtime(monkeypatch):
+    workspace = Path.cwd() / f".pytest-mcp-workspace-{uuid4().hex}"
+    workspace.mkdir()
+    (workspace / ".git").mkdir()
+
+    def fail_service():
+        raise AssertionError("health should not load the service runtime")
+
+    try:
+        monkeypatch.chdir(workspace)
+        monkeypatch.setattr("memk.mcp.server._service_instance", fail_service)
+
+        result = asyncio.run(_call_tool("memk_health", {}))
+
+        text = result["content"][0]["text"]
+        assert "Grade:" in text
+        assert "Memories: 0" in text
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 

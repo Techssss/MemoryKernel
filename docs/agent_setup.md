@@ -6,10 +6,11 @@ The examples below all launch the same local stdio server: `memk-mcp`.
 
 ## Tool Surface
 
-MemoryKernel starts with four MCP tools:
+MemoryKernel starts with five MCP tools:
 
 | Tool | When the agent should use it |
 | --- | --- |
+| `memk_guide` | When the agent first connects or needs the memory policy |
 | `memk_remember` | After a decision, bug fix, project fact, workflow, or user preference should survive the session |
 | `memk_recall` | When the agent needs prior project knowledge |
 | `memk_context` | At the start of a task, before editing code, or before answering a project-specific question |

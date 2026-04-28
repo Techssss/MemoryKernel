@@ -15,6 +15,7 @@ Check the CLI:
 
 ```bash
 memk --help
+memk guide
 ```
 
 Optional: install the semantic model stack for stronger recall quality:
@@ -42,6 +43,9 @@ memk health
 
 MemoryKernel auto-creates local state under `.memk/` on first use. Do not commit
 that directory.
+
+`memk init` is optional. Use it only when you want to create `.memk/` before the
+first memory write.
 
 ## 3. Know What To Store
 

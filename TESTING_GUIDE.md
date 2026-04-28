@@ -16,7 +16,7 @@ python -m pytest -q -rs tests
 Expected current result:
 
 ```text
-137 passed, 28 skipped
+139 passed, 28 skipped
 ```
 
 Skipped tests are intentional unless the required optional dependencies or environment flags are present:

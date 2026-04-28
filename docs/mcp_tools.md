@@ -12,6 +12,19 @@ memk-mcp
 The server uses MCP's stdio transport. It auto-initializes `.memk/` state in the
 current workspace when a memory tool first needs storage.
 
+## `memk_guide`
+
+Explain when and how an agent should use MemoryKernel.
+
+Input:
+
+```json
+{}
+```
+
+Use this when an agent first connects to MemoryKernel or when you want it to
+follow the intended memory policy.
+
 ## `memk_remember`
 
 Store a project memory.

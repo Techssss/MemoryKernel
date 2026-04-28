@@ -225,6 +225,30 @@ def _setup_instructions(tool: str) -> str:
     supported = "claude, cursor, vscode, openclaw, mcp"
     raise ValueError(f"Unknown tool '{tool}'. Supported tools: {supported}")
 
+def _guide_text() -> str:
+    """Return first-run guidance for humans and agents."""
+    return "\n".join([
+        "MemoryKernel helps AI agents keep project knowledge across sessions.",
+        "",
+        "Use these first:",
+        '  1. memk remember "Decision: use PostgreSQL for billing writes"',
+        '  2. memk recall "billing database decision"',
+        '  3. memk health',
+        "",
+        "Store durable facts:",
+        "  - decisions, conventions, bug causes, fixes, preferences, workflows",
+        "",
+        "Avoid temporary notes:",
+        "  - opened a file, ran a command, read a README",
+        "",
+        "Connect an agent:",
+        "  memk setup claude    # or cursor, vscode, openclaw",
+        "",
+        "Optional semantic model:",
+        '  python -m pip install -e ".[semantic]"',
+        "  Set MEMK_EMBEDDER=hashing for fastest deterministic startup.",
+    ])
+
 def _add_memory(content: str, importance: float, confidence: float, workspace: Optional[str]) -> None:
     """Shared implementation for memory write commands."""
     _ensure_workspace(auto_create=True, announce=True)
@@ -339,6 +363,11 @@ def setup(
     except Exception as e:
         console.print(f"[bold red]Setup failed:[/bold red] {e}")
         raise typer.Exit(code=1)
+
+@app.command()
+def guide():
+    """Show the shortest path from install to useful project memory."""
+    console.print(Panel(_guide_text(), title="MemoryKernel Guide", expand=False))
 
 @app.command()
 def stats(workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace scope.")):
@@ -477,21 +506,20 @@ def restore(
 def init():
     """Initialize the MemoryKernel workspace and brain state."""
     from memk.workspace.manager import WorkspaceManager
+    from memk.storage.db import MemoryDB
     try:
         ws = WorkspaceManager()
         is_reinit = ws.is_initialized()
         
         manifest = ws.init_workspace()
-        
-        # Initialize DB at the correct path
-        service = get_service()
-        runtime = service.global_runtime.get_workspace_runtime(manifest.brain_id, ws.get_db_path())
-        runtime.db.init_db()
+        MemoryDB(ws.get_db_path()).init_db()
         
         msg = "re-initialized" if is_reinit else "initialized"
         console.print(f"[green]MemoryKernel workspace {msg} successfully.[/green]")
         console.print(f"Brain ID: [magenta]{manifest.brain_id}[/magenta]")
         console.print(f"Path: [dim]{ws.memk_path}[/dim]")
+        console.print()
+        console.print(Panel(_guide_text(), title="Next Steps", expand=False))
     except Exception as e:
         console.print(f"[bold red]Failed to initialize workspace:[/bold red] {e}")
         raise typer.Exit(code=1)

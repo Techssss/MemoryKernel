@@ -2,6 +2,7 @@
 
 Start here if you are evaluating or integrating MemoryKernel:
 
+- Run `memk guide` for the shortest first-run tour.
 - [First 10 Minutes](./quickstart_first_10_minutes.md)
 - [Agent Setup](./agent_setup.md)
 - [MCP Tools](./mcp_tools.md)

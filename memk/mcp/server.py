@@ -3,6 +3,7 @@ Minimal MCP stdio server for MemoryKernel.
 
 The server exposes the product-first tool surface:
 
+- memk_guide
 - memk_remember
 - memk_recall
 - memk_context
@@ -29,6 +30,14 @@ _service: Optional[MemoryKernelService] = None
 
 
 TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "memk_guide",
+        "description": "Explain when and how an agent should use MemoryKernel.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
     {
         "name": "memk_remember",
         "description": "Store a project memory for future AI agent sessions.",
@@ -123,6 +132,24 @@ def _ensure_workspace_id(workspace_id: Optional[str] = None) -> str:
     return ws.get_manifest().brain_id
 
 
+def _light_diagnostics(workspace_id: Optional[str] = None) -> tuple[dict[str, Any], str]:
+    from memk.storage.db import MemoryDB
+    from memk.workspace.manager import WorkspaceManager
+
+    ws = WorkspaceManager()
+    if not ws.is_initialized():
+        ws.init_workspace()
+        MemoryDB(ws.get_db_path()).init_db()
+
+    resolved_workspace_id = workspace_id or ws.get_manifest().brain_id
+    db = MemoryDB(ws.get_db_path())
+    db.init_db()
+    return {
+        "db_stats": db.get_stats(),
+        "runtime": {"index_entries": "not loaded", "active_jobs": 0},
+    }, resolved_workspace_id
+
+
 def _text_result(text: str) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": text}]}
 
@@ -173,9 +200,34 @@ def _format_health(diag: dict[str, Any], workspace_id: str) -> str:
     )
 
 
+def _guide_text() -> str:
+    return "\n".join(
+        [
+            "MemoryKernel helps agents keep project knowledge across sessions.",
+            "",
+            "Use memk_remember after durable facts:",
+            "- decisions, conventions, bug causes, fixes, preferences, workflows",
+            "",
+            "Use memk_recall when prior project knowledge may matter.",
+            "Use memk_context before code edits or project-specific answers.",
+            "Use memk_health to check whether memory is initialized and useful.",
+            "",
+            "Avoid storing temporary actions such as file reads or test runs.",
+            "Prefer compact memories between 50 and 300 characters.",
+        ]
+    )
+
+
 async def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if name not in {tool["name"] for tool in TOOLS}:
         raise ValueError(f"Unknown tool: {name}")
+
+    if name == "memk_guide":
+        return _text_result(_guide_text())
+
+    if name == "memk_health":
+        diag, workspace_id = _light_diagnostics(arguments.get("workspace_id"))
+        return _text_result(_format_health(diag, workspace_id))
 
     service = _service_instance()
     workspace_id = _ensure_workspace_id(arguments.get("workspace_id"))
@@ -205,10 +257,6 @@ async def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             workspace_id,
         )
         return _text_result(result.get("context", ""))
-
-    if name == "memk_health":
-        diag = service.get_diagnostics(workspace_id)
-        return _text_result(_format_health(diag, workspace_id))
 
     raise ValueError(f"Unknown tool: {name}")
 

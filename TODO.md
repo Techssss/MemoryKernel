@@ -65,6 +65,10 @@ build on.
   quickly without torch, sentence-transformers, scikit-learn, or spaCy.
 - [x] Keep `memk health` lightweight by avoiding embedding model startup when
   the daemon is not running.
+- [x] Make `memk init` lightweight and add `memk guide` for first-run product
+  guidance.
+- [x] Add MCP `memk_guide` and keep MCP health lightweight without loading the
+  service runtime.
 - [ ] Finish CLI/API parity for remember, search, context, forget, export,
   import, health, and stats operations.
 - [x] Remove or clearly deprecate legacy unversioned daemon endpoints.
@@ -117,5 +121,5 @@ Acceptance criteria:
 - [ ] Add optional OpenTelemetry instrumentation.
 - [ ] Add a public roadmap grouped by beta, stable, and enterprise-oriented
   capabilities.
-- [ ] Expand MCP server beyond the four starter tools once CLI/API parity is
+- [ ] Expand MCP server beyond the starter tools once CLI/API parity is
   complete.

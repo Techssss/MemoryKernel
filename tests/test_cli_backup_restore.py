@@ -48,3 +48,31 @@ def test_restore_requires_force(tmp_path, monkeypatch):
 
     assert result.exit_code == 1
     assert "--force" in result.output
+
+
+def test_init_is_lightweight_and_prints_next_steps(tmp_path, monkeypatch):
+    import memk.cli.main as cli_main
+
+    monkeypatch.chdir(tmp_path)
+
+    def fail_get_service():
+        raise AssertionError("init should not load the service runtime")
+
+    monkeypatch.setattr(cli_main, "get_service", fail_get_service)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["init"])
+
+    assert result.exit_code == 0
+    assert "Next Steps" in result.output
+    assert (tmp_path / ".memk" / "manifest.json").exists()
+    assert (tmp_path / ".memk" / "state" / "state.db").exists()
+
+
+def test_guide_prints_first_run_flow():
+    runner = CliRunner()
+    result = runner.invoke(app, ["guide"])
+
+    assert result.exit_code == 0
+    assert "memk remember" in result.output
+    assert "memk setup claude" in result.output

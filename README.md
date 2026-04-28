@@ -42,6 +42,12 @@ memk health
 No `init` step is required. The first memory command creates `.memk/`
 automatically.
 
+Need the shortest product tour?
+
+```bash
+memk guide
+```
+
 Base install is intentionally lightweight. It does not require torch,
 sentence-transformers, scikit-learn, or spaCy. MemoryKernel falls back to a
 deterministic local embedder so setup works offline. In `auto` mode, it uses the
@@ -67,6 +73,9 @@ export MEMK_EMBEDDER=hashing
 | `memk recall "..."` | Ask what the project memory already knows |
 | `memk health` | See whether memory is initialized, indexed, and useful |
 
+`memk init` is optional and lightweight. It creates `.memk/` and prints the
+same next-step guide without loading an embedding model.
+
 For longer agent prompts:
 
 ```bash
@@ -81,10 +90,11 @@ The recommended integration path is MCP:
 memk-mcp
 ```
 
-MemoryKernel exposes four starter tools:
+MemoryKernel exposes five starter tools:
 
 | MCP tool | What the agent does |
 | --- | --- |
+| `memk_guide` | Explains when to remember, recall, and build context |
 | `memk_remember` | Stores project memory |
 | `memk_recall` | Recalls relevant memory |
 | `memk_context` | Builds compact context before work |
@@ -283,7 +293,7 @@ python -m pytest -q -rs tests
 Current verified result on April 28, 2026:
 
 ```text
-137 passed, 28 skipped
+139 passed, 28 skipped
 ```
 
 Expected skips:
