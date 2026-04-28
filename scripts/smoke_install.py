@@ -51,6 +51,7 @@ def main() -> None:
     run([python, "-m", "memk.cli.main", "search", "--help"])
     run([python, "-m", "memk.cli.main", "recall", "--help"])
     run([python, "-m", "memk.cli.main", "health", "--help"])
+    run([python, "-m", "memk.cli.main", "setup", "--help"])
     run([python, "-m", "memk.mcp.server", "--help"])
     run([
         python,

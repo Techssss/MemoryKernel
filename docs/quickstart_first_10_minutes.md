@@ -1,6 +1,7 @@
 # First 10 Minutes With MemoryKernel
 
-This guide starts from a fresh clone and ends with a working memory recall.
+This guide starts from a fresh clone and ends with an AI-agent-ready project
+memory.
 
 ## 1. Install
 
@@ -30,19 +31,35 @@ memk health
 MemoryKernel auto-creates local state under `.memk/` on first use. Do not commit
 that directory.
 
-## 3. Build Agent Context
+## 3. Know What To Store
+
+Store durable project knowledge:
+
+```bash
+memk remember "Decision: use PostgreSQL for concurrent writes in billing"
+memk remember "Bug fix: 401 locally usually means MEMK_API_TOKEN mismatch"
+memk remember "Workflow: run npm test in sdk/nodejs before publishing"
+```
+
+Avoid storing temporary observations like "opened README" or "ran tests".
+
+## 4. Build Agent Context
 
 ```bash
 memk context "What should I know before editing billing?"
 ```
 
-## 4. Optional MCP Setup
+## 5. Connect An AI Tool
 
 ```bash
-memk-mcp
+memk setup claude
+memk setup cursor
+memk setup vscode
+memk setup openclaw
 ```
 
-Then add it to your AI tool. See [Agent Setup](./agent_setup.md).
+Copy the printed snippet into your AI tool. See [Agent Setup](./agent_setup.md)
+for the full guide.
 
 Useful prompts:
 
@@ -52,7 +69,7 @@ Recall what we know about billing.
 Run memk_health and summarize memory status.
 ```
 
-## 5. Use The Python SDK
+## 6. Use The Python SDK
 
 ```python
 from memk.sdk import MemoryKernel
@@ -66,7 +83,7 @@ for item in results:
     print(item.score, item.content)
 ```
 
-## 6. Optional Daemon Mode
+## 7. Optional Daemon Mode
 
 For repeated CLI and SDK use:
 

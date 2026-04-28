@@ -2,121 +2,184 @@
 
 [![CI](https://github.com/Techssss/MemoryKernel/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Techssss/MemoryKernel/actions/workflows/ci.yml)
 
-Project memory that AI agents can carry across sessions.
+Your AI coding agent forgets project decisions between sessions. MemoryKernel
+gives each project a local memory that agents can remember, recall, and check.
 
-MemoryKernel (`memk`) gives every AI coding agent a durable project memory that
-survives restarts, context resets, and handoffs. It stores raw memories, extracts
-fact-like knowledge, builds local retrieval context, and keeps workspace state
-isolated in SQLite.
+Use it when you are tired of re-explaining:
 
-Current status: **beta / active development**. The core storage, retrieval, graph, and
-sync paths are covered by tests, but the product surface is still being hardened for
-broader professional use.
+- why the team chose a library, API shape, or deployment path
+- where important project conventions live
+- what caused a bug and how it was fixed
+- user preferences and repeated workflow instructions
+- context that Claude, Cursor, VS Code agents, OpenClaw, or Codex should keep
+  across sessions
 
-## What It Does
+MemoryKernel is local-first. Project memory lives in `.memk/` inside your
+workspace and is backed by SQLite.
 
-- MCP-first memory tools for AI agents.
-- Local SQLite storage with WAL mode and forward-only schema migrations.
-- Semantic and lexical retrieval over memories and facts.
-- Deterministic offline embedding fallback for tests and constrained environments.
-- Workspace isolation with generation tracking for stale-context detection.
-- Git history ingestion and manual memory capture through CLI, REST API, and SDKs.
-- Knowledge graph sidecar tables for entities, mentions, edges, and consolidated facts.
-- Delta sync, HLC versioning, Merkle recovery, checkpoints, and conflict visibility.
-- Basic observability through diagnostics, metrics, benchmark reports, and health checks.
+Current status: **beta / active development**. The core storage, retrieval,
+graph, sync, SDK, and CI paths are tested. The product surface is being shaped
+for broader professional use.
 
-## Maturity Snapshot
+## Start In 30 Seconds
 
-| Area | Status |
-| --- | --- |
-| Core storage and retrieval | Functional and tested |
-| Graph and sync hardening | Functional with stress coverage |
-| CLI and REST API | Usable, 3-command onboarding added |
-| MCP server | Minimal tool surface for agent integrations |
-| Python SDK | Usable synchronous client |
-| Node.js SDK | Usable HTTP client with CI build and tests |
-| File watcher | MVP, metadata/generation oriented |
-| Extraction quality | Regex baseline plus optional spaCy/GLiNER paths |
-| Packaging and release process | CI smoke-tested, release workflows manual-gated |
-
-## Installation
+Install from a clone:
 
 ```bash
 git clone https://github.com/Techssss/MemoryKernel.git
 cd MemoryKernel
-
 python -m pip install -e ".[dev]"
 ```
 
-Start the local daemon:
+Inside any project you want your agent to remember:
 
 ```bash
-memk serve
-```
-
-## Quick Start
-
-For a complete fresh-machine path, see
-[First 10 Minutes With MemoryKernel](./docs/quickstart_first_10_minutes.md).
-
-You only need three commands to start:
-
-```bash
-cd /path/to/your/project
-memk remember "The API endpoint for users is /api/v1/users"
-memk recall "users API endpoint"
+memk remember "The billing service owns invoice numbering"
+memk recall "who owns invoice numbering?"
 memk health
 ```
 
-No explicit init is required for first use. MemoryKernel creates `.memk/`
-workspace state automatically when the first memory command runs.
+No `init` step is required. The first memory command creates `.memk/`
+automatically.
 
-`memk search` remains available for developer workflows. `memk context` builds a
-compact context block for an agent prompt:
+## The Three Commands
+
+| Command | Use it for |
+| --- | --- |
+| `memk remember "..."` | Save a durable project fact, decision, bug fix, preference, or workflow |
+| `memk recall "..."` | Ask what the project memory already knows |
+| `memk health` | See whether memory is initialized, indexed, and useful |
+
+For longer agent prompts:
 
 ```bash
-memk context "How do I call the users API?"
+memk context "What should I know before changing billing?"
 ```
 
-## MCP For Agents
+## Give Your Agent Memory
 
-Use the MCP server when an AI tool should remember and recall automatically:
+The recommended integration path is MCP:
 
 ```bash
 memk-mcp
 ```
 
-The starter MCP surface is intentionally small:
+MemoryKernel exposes four starter tools:
 
-| Tool | Purpose |
+| MCP tool | What the agent does |
 | --- | --- |
-| `memk_remember` | Store project memory |
-| `memk_recall` | Recall relevant memory |
-| `memk_context` | Build compact agent context |
-| `memk_health` | Show memory health and next actions |
+| `memk_remember` | Stores project memory |
+| `memk_recall` | Recalls relevant memory |
+| `memk_context` | Builds compact context before work |
+| `memk_health` | Checks memory health and next actions |
 
-Setup guides for Claude Code, Cursor, VS Code, and OpenClaw are in
-[Agent Setup](./docs/agent_setup.md). Tool details are in
-[MCP Tools](./docs/mcp_tools.md).
-
-Create and restore a local memory backup:
+Print setup snippets for your tool:
 
 ```bash
-memk backup
-memk restore memk-backup-YYYYMMDDTHHMMSSZ.zip --force
+memk setup claude
+memk setup cursor
+memk setup vscode
+memk setup openclaw
 ```
 
-Ingest recent Git history:
+Full guides:
+
+- [Agent Setup](./docs/agent_setup.md)
+- [MCP Tools](./docs/mcp_tools.md)
+- [First 10 Minutes](./docs/quickstart_first_10_minutes.md)
+
+## What Should Be Remembered
+
+Good memories are compact and durable:
+
+```text
+Decision: use PostgreSQL for concurrent writes in the sync service.
+Bug fix: auth 401 was caused by mismatched MEMK_API_TOKEN.
+Workflow: run npm test in sdk/nodejs before publishing the Node SDK.
+Preference: user wants concise technical summaries in Vietnamese.
+```
+
+Weak memories are temporary observations:
+
+```text
+Read README.md.
+Ran tests.
+Opened file X.
+```
+
+The goal is not to record every action. The goal is to preserve knowledge that
+would otherwise be lost when the agent session resets.
+
+## Setup By Tool
+
+### Claude Code
 
 ```bash
-memk ingest --limit 50
+claude mcp add --transport stdio memorykernel --scope user -- memk-mcp
 ```
 
-Run the file watcher:
+### Cursor
+
+Add to `~/.cursor/mcp.json` or `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "memorykernel": {
+      "command": "memk-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+### VS Code
+
+Add to `.vscode/mcp.json` or your user MCP config:
+
+```json
+{
+  "servers": {
+    "memorykernel": {
+      "type": "stdio",
+      "command": "memk-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+### OpenClaw
 
 ```bash
-memk watch start --foreground
+openclaw mcp set memorykernel '{"command":"memk-mcp"}'
 ```
+
+## Why MemoryKernel
+
+- **Project scoped**: each repository gets its own `.memk/` memory.
+- **MCP-first**: agents can use memory tools directly.
+- **Local-first**: SQLite storage by default, no hosted dependency required.
+- **Agent context**: `memk context` turns recalled memory into a compact prompt
+  block.
+- **Developer friendly**: CLI, REST API, Python SDK, and Node.js SDK.
+- **Recoverable**: backup/restore, schema migrations, diagnostics, metrics, and
+  sync hardening are part of the project.
+
+## How It Works
+
+```text
+agent or developer
+  -> memk CLI, memk-mcp, SDK, or REST API
+  -> MemoryKernel service
+  -> project-local SQLite memory store
+  -> ranked memories, facts, and context
+```
+
+MemoryKernel stores raw memories, extracts fact-like knowledge, and retrieves
+relevant context using local retrieval signals. It also includes graph sidecar
+tables, generation tracking, HLC/oplog sync hardening, Merkle recovery, and
+workspace diagnostics.
 
 ## Python SDK
 
@@ -125,11 +188,7 @@ from memk.sdk import MemoryKernel
 
 mk = MemoryKernel()
 
-memory_id = mk.remember(
-    "The billing service owns invoice numbering",
-    importance=0.8,
-)
-
+mk.remember("The billing service owns invoice numbering", importance=0.8)
 results = mk.search("who owns invoice numbering?", limit=5)
 context = mk.context("How should an agent update billing code?", max_chars=1200)
 status = mk.status()
@@ -152,7 +211,13 @@ const context = await mk.context("What should I know before editing UI code?");
 
 ## REST API
 
-The daemon exposes versioned endpoints under `/v1`:
+Start the daemon:
+
+```bash
+memk serve
+```
+
+Versioned endpoints live under `/v1`:
 
 ```text
 GET  /v1/health
@@ -163,9 +228,6 @@ GET  /v1/status
 GET  /v1/metrics
 POST /v1/ingest/git
 ```
-
-Legacy daemon endpoints such as `/add`, `/search`, and `/context` are still present for
-the current CLI path.
 
 ## Project Layout
 
@@ -183,8 +245,6 @@ MemoryKernel/
     server/             Local daemon and process manager
     storage/            SQLite schema, migrations, graph repository
     sync/               HLC, oplog, Merkle, recovery, conflict handling
-    synthesis/          Knowledge synthesis helpers
-    watcher/            File change watcher
     workspace/          Workspace manifest and generation state
   sdk/nodejs/           Node.js SDK
   bench/                Synthetic benchmark and stress runners
@@ -193,13 +253,10 @@ MemoryKernel/
   docs/                 User, integration, and operations docs
 ```
 
-Local runtime state belongs in `.memk/`, `.tmp/`, `tmp_*`, and generated `.db` files.
-External reference snapshots such as `neural-memory-main/` should stay outside Git
-tracking or live in a separate archive repository.
+Local runtime state belongs in `.memk/`, `.tmp/`, `tmp_*`, and generated `.db`
+files. External reference snapshots should stay outside Git tracking.
 
 ## Testing
-
-Regular suite:
 
 ```bash
 python -m pytest -q -rs tests
@@ -214,43 +271,10 @@ Current verified result on April 28, 2026:
 Expected skips:
 
 - `tests/test_spacy_extractor.py` when `en_core_web_sm` is not installed.
-- `tests/test_large_scale_graph_sync_stress.py` unless `MEMK_RUN_LARGE_STRESS=1`.
-
-Large stress test:
-
-```powershell
-$env:MEMK_RUN_LARGE_STRESS = "1"
-python -m pytest -q -rs tests/test_large_scale_graph_sync_stress.py
-```
-
-Benchmark runner:
-
-```bash
-python -m bench.runner --size 1000
-```
+- `tests/test_large_scale_graph_sync_stress.py` unless
+  `MEMK_RUN_LARGE_STRESS=1`.
 
 See [TESTING_GUIDE.md](./TESTING_GUIDE.md) for more detail.
-
-## Benchmark Snapshot
-
-The current offline benchmark validates pipeline behavior with a deterministic
-lightweight embedder. It is useful for regression and bottleneck detection, but it is
-not a claim about final production embedding quality.
-
-Benchmark reports are generated locally and ignored by Git.
-
-## Development Notes
-
-- Python target: 3.10+.
-- Package name: `memk`.
-- CLI entry point: `memk`.
-- Default daemon bind: `127.0.0.1:15301`.
-- CI runs Python tests with coverage, package smoke tests, and Node SDK tests.
-- Data remains local unless an embedding/extraction provider you configure downloads
-  or calls external models.
-- The project currently prefers correctness and recoverability over raw throughput.
-- Set `MEMK_API_TOKEN` to require bearer-token authentication for protected
-  daemon endpoints.
 
 ## Documentation
 
@@ -276,9 +300,9 @@ The detailed product-readiness checklist lives in [TODO.md](./TODO.md).
 
 Near-term priorities:
 
-- Tighten packaging and release automation.
-- Finish CLI/API parity and remove legacy endpoint drift.
-- Add stronger multi-user deployment guidance.
+- Expand MCP tool parity.
+- Add stronger visual status surfaces.
+- Ship editor/plugin templates for common agent workflows.
 
 ## License
 

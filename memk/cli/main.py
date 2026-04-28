@@ -150,6 +150,81 @@ def _render_health(
 
     console.print(Panel("\n".join(lines), title="MemoryKernel Health", expand=False))
 
+def _setup_instructions(tool: str) -> str:
+    """Return copy/paste setup instructions for a supported AI tool."""
+    normalized = tool.lower().replace("-", "").replace("_", "")
+    if normalized in {"mcp", "generic"}:
+        return "\n".join([
+            "Generic MCP client",
+            "",
+            "Server command:",
+            "  memk-mcp",
+            "",
+            "Config shape:",
+            '{',
+            '  "mcpServers": {',
+            '    "memorykernel": {',
+            '      "command": "memk-mcp",',
+            '      "args": []',
+            '    }',
+            '  }',
+            '}',
+        ])
+    if normalized in {"claude", "claudecode"}:
+        return "\n".join([
+            "Claude Code",
+            "",
+            "Run:",
+            "  claude mcp add --transport stdio memorykernel --scope user -- memk-mcp",
+            "",
+            "Then ask Claude:",
+            '  Remember: the billing service owns invoice numbering.',
+            '  Recall what we know about billing.',
+        ])
+    if normalized == "cursor":
+        return "\n".join([
+            "Cursor",
+            "",
+            "Add to ~/.cursor/mcp.json or .cursor/mcp.json:",
+            '{',
+            '  "mcpServers": {',
+            '    "memorykernel": {',
+            '      "command": "memk-mcp",',
+            '      "args": []',
+            '    }',
+            '  }',
+            '}',
+            "",
+            "Restart Cursor after changing MCP config.",
+        ])
+    if normalized in {"vscode", "vs"}:
+        return "\n".join([
+            "VS Code",
+            "",
+            "Add to .vscode/mcp.json or your user MCP config:",
+            '{',
+            '  "servers": {',
+            '    "memorykernel": {',
+            '      "type": "stdio",',
+            '      "command": "memk-mcp",',
+            '      "args": []',
+            '    }',
+            '  }',
+            '}',
+        ])
+    if normalized == "openclaw":
+        return "\n".join([
+            "OpenClaw",
+            "",
+            "Run:",
+            '  openclaw mcp set memorykernel \'{"command":"memk-mcp"}\'',
+            "",
+            "MemoryKernel runs as a local stdio MCP server.",
+        ])
+
+    supported = "claude, cursor, vscode, openclaw, mcp"
+    raise ValueError(f"Unknown tool '{tool}'. Supported tools: {supported}")
+
 def _add_memory(content: str, importance: float, confidence: float, workspace: Optional[str]) -> None:
     """Shared implementation for memory write commands."""
     _ensure_workspace(auto_create=True, announce=True)
@@ -247,6 +322,20 @@ def health():
         )
     except Exception as e:
         console.print(f"[bold red]Health check failed:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+@app.command()
+def setup(
+    tool: str = typer.Argument(
+        "mcp",
+        help="Tool to configure: claude, cursor, vscode, openclaw, or mcp.",
+    )
+):
+    """Print copy/paste setup instructions for AI tools."""
+    try:
+        console.print(Panel(_setup_instructions(tool), title="MemoryKernel Setup", expand=False))
+    except Exception as e:
+        console.print(f"[bold red]Setup failed:[/bold red] {e}")
         raise typer.Exit(code=1)
 
 @app.command()

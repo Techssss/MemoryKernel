@@ -57,6 +57,10 @@ Acceptance criteria:
 Goal: the API, CLI, and SDKs feel consistent enough for external developers to
 build on.
 
+- [x] Rework README around the user problem, three core commands, MCP setup,
+  and concrete memory examples.
+- [x] Add `memk setup` snippets for Claude Code, Cursor, VS Code, OpenClaw,
+  and generic MCP clients.
 - [ ] Finish CLI/API parity for remember, search, context, forget, export,
   import, health, and stats operations.
 - [x] Remove or clearly deprecate legacy unversioned daemon endpoints.

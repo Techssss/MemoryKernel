@@ -21,6 +21,15 @@ The server command is:
 memk-mcp
 ```
 
+You can print copy/paste setup snippets from the CLI:
+
+```bash
+memk setup claude
+memk setup cursor
+memk setup vscode
+memk setup openclaw
+```
+
 First use auto-creates local `.memk/` state in the current project workspace.
 
 ## Claude Code
