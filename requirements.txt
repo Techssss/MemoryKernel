@@ -1,8 +1,5 @@
 # Core dependencies
 numpy>=1.24.0
-scikit-learn>=1.3.0
-sentence-transformers>=2.2.0
-torch>=2.0.0
 fastapi>=0.100.0
 uvicorn>=0.23.0
 typer>=0.9.0
@@ -10,14 +7,17 @@ rich>=13.0.0
 pydantic>=2.0.0
 watchdog>=3.0.0
 gitpython>=3.1.0
+requests>=2.31.0
 httpx>=0.24.0
 
-# Performance monitoring (optional)
+# Performance monitoring
 psutil>=5.9.0
 
-# Optional but recommended
+# Environment configuration
 python-dotenv>=1.0.0
 
-# Graph extraction (optional — needed for SpaCyExtractor)
-# After installing, run: python -m spacy download en_core_web_sm
-spacy>=3.7.0
+# Optional extras:
+#   pip install -e ".[semantic]"  # sentence-transformers + torch
+#   pip install -e ".[tfidf]"     # scikit-learn TF-IDF fallback
+#   pip install -e ".[nlp]"       # spaCy extractor package
+# After installing spaCy, run: python -m spacy download en_core_web_sm

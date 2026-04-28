@@ -310,15 +310,17 @@ def health():
             )
             return
 
-        service = get_service()
-        diag = service.get_diagnostics(workspace_id)
+        from memk.storage.db import MemoryDB
+        db = MemoryDB(ws.get_db_path())
+        db.init_db()
+        stats = db.get_stats()
         _render_health(
             initialized=ws.is_initialized(),
             daemon_running=False,
             workspace_id=workspace_id,
             root=str(ws.root),
-            stats=diag.get("db_stats", {}),
-            runtime=diag.get("runtime", {}),
+            stats=stats,
+            runtime={"index_entries": "not loaded", "active_jobs": 0},
         )
     except Exception as e:
         console.print(f"[bold red]Health check failed:[/bold red] {e}")

@@ -26,9 +26,15 @@
 
 | Dependency | Purpose | Required |
 | --- | --- | --- |
-| spaCy model `en_core_web_sm` | Extractor quality tests | No |
+| sentence-transformers / torch | Stronger semantic embeddings via `.[semantic]` | No |
+| scikit-learn | TF-IDF fallback via `.[tfidf]` | No |
+| spaCy package + `en_core_web_sm` | Extractor quality via `.[nlp]` | No |
 | GLiNER | Optional entity extraction path | No |
-| sentence-transformers / torch | Production semantic embeddings | Yes for full semantic quality |
+
+Base install uses a deterministic hashing embedder when the semantic model stack
+is unavailable. `MEMK_EMBEDDER=auto` tries semantic embeddings first, then falls
+back to hashing. Set `MEMK_EMBEDDER=hashing`, `MEMK_EMBEDDER=tfidf`, or
+`MEMK_EMBEDDER=semantic` to choose a backend explicitly.
 
 ## Storage
 

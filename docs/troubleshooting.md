@@ -6,15 +6,43 @@ Upgrade packaging tools first:
 
 ```bash
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install -e ".[dev]"
+python -m pip install -e .
+```
+
+The base install avoids torch, sentence-transformers, scikit-learn, and spaCy.
+Install model extras only when you need them:
+
+```bash
+python -m pip install -e ".[semantic]"
+python -m pip install -e ".[tfidf]"
+python -m pip install -e ".[nlp]"
 ```
 
 If optional model dependencies fail, validate the core suite before debugging
-model-specific tests:
+model-specific behavior:
 
 ```bash
 python -m pytest -q -rs tests
 ```
+
+## Model Loading Is Slow
+
+Use the deterministic hashing embedder for fast startup:
+
+```bash
+export MEMK_EMBEDDER=hashing
+```
+
+On PowerShell:
+
+```powershell
+$env:MEMK_EMBEDDER = "hashing"
+```
+
+For stronger semantic recall, install `.[semantic]` and leave
+`MEMK_EMBEDDER=auto` or set `MEMK_EMBEDDER=semantic`. `auto` tries the semantic
+model first and falls back to deterministic hashing if the model stack is not
+available.
 
 ## spaCy Tests Are Skipped
 

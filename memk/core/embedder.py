@@ -679,27 +679,59 @@ _DEFAULT_PIPELINE: Optional[EmbeddingPipeline] = None
 def get_default_embedder() -> BaseEmbedder:
     """
     Lazy singleton factory.
-    Tries sentence-transformers first, then TF-IDF, then hashing.
+    Uses MEMK_EMBEDDER when set:
+      - sentence or semantic: sentence-transformers
+      - tfidf: scikit-learn TF-IDF
+      - hashing: zero-dependency deterministic fallback
+      - auto: sentence-transformers, then hashing
     """
     global _DEFAULT_EMBEDDER
     if _DEFAULT_EMBEDDER is None:
-        try:
-            _DEFAULT_EMBEDDER = SentenceTransformerEmbedder()
-            logger.info("Using SentenceTransformerEmbedder (all-MiniLM-L6-v2)")
-        except Exception as exc:
-            logger.warning(
-                "SentenceTransformerEmbedder unavailable (%s). Falling back to TFIDFEmbedder.",
-                exc,
-            )
+        mode = os.getenv("MEMK_EMBEDDER", "auto").strip().lower()
+        aliases = {
+            "sentence-transformers": "sentence",
+            "sentencetransformers": "sentence",
+            "st": "sentence",
+            "semantic": "sentence",
+            "hash": "hashing",
+            "fallback": "hashing",
+            "sklearn": "tfidf",
+        }
+        mode = aliases.get(mode, mode)
+
+        if mode not in {"auto", "sentence", "tfidf", "hashing"}:
+            logger.warning("Unknown MEMK_EMBEDDER=%r. Falling back to auto.", mode)
+            mode = "auto"
+
+        if mode == "hashing":
+            _DEFAULT_EMBEDDER = HashingEmbedder()
+            logger.info("Using HashingEmbedder fallback")
+            return _DEFAULT_EMBEDDER
+
+        if mode in {"auto", "sentence"}:
+            try:
+                _DEFAULT_EMBEDDER = SentenceTransformerEmbedder()
+                logger.info("Using SentenceTransformerEmbedder (all-MiniLM-L6-v2)")
+                return _DEFAULT_EMBEDDER
+            except Exception as exc:
+                logger.warning(
+                    "SentenceTransformerEmbedder unavailable (%s). Falling back.",
+                    exc,
+                )
+
+        if mode == "tfidf":
             try:
                 _DEFAULT_EMBEDDER = TFIDFEmbedder()
                 logger.info("Using TFIDFEmbedder fallback")
+                return _DEFAULT_EMBEDDER
             except Exception as tfidf_exc:
                 logger.warning(
                     "TFIDFEmbedder unavailable (%s). Falling back to HashingEmbedder.",
                     tfidf_exc,
                 )
-                _DEFAULT_EMBEDDER = HashingEmbedder()
+
+        _DEFAULT_EMBEDDER = HashingEmbedder()
+        logger.info("Using HashingEmbedder fallback")
     return _DEFAULT_EMBEDDER
 
 

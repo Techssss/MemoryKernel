@@ -19,6 +19,17 @@ if requirements_file.exists():
         if line.strip() and not line.startswith("#")
     ]
 
+semantic_deps = [
+    "sentence-transformers>=2.7.0",
+    "torch>=2.0.0",
+]
+tfidf_deps = [
+    "scikit-learn>=1.3.0",
+]
+nlp_deps = [
+    "spacy>=3.7.0",
+]
+
 setup(
     name="memk",
     version="0.1.0",
@@ -43,6 +54,10 @@ setup(
     python_requires=">=3.10",
     install_requires=requirements,
     extras_require={
+        "semantic": semantic_deps,
+        "tfidf": tfidf_deps,
+        "nlp": nlp_deps,
+        "all": semantic_deps + tfidf_deps + nlp_deps,
         "dev": [
             "pytest>=7.0.0",
             "pytest-asyncio>=0.21.0",

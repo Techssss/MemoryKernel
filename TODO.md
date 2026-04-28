@@ -61,6 +61,10 @@ build on.
   and concrete memory examples.
 - [x] Add `memk setup` snippets for Claude Code, Cursor, VS Code, OpenClaw,
   and generic MCP clients.
+- [x] Make heavy embedding/NLP dependencies optional so base install starts
+  quickly without torch, sentence-transformers, scikit-learn, or spaCy.
+- [x] Keep `memk health` lightweight by avoiding embedding model startup when
+  the daemon is not running.
 - [ ] Finish CLI/API parity for remember, search, context, forget, export,
   import, health, and stats operations.
 - [x] Remove or clearly deprecate legacy unversioned daemon endpoints.

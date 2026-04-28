@@ -8,13 +8,25 @@ memory.
 ```bash
 git clone https://github.com/Techssss/MemoryKernel.git
 cd MemoryKernel
-python -m pip install -e ".[dev]"
+python -m pip install -e .
 ```
 
 Check the CLI:
 
 ```bash
 memk --help
+```
+
+Optional: install the semantic model stack for stronger recall quality:
+
+```bash
+python -m pip install -e ".[semantic]"
+```
+
+If you want the fastest deterministic startup, keep the base install or set:
+
+```bash
+export MEMK_EMBEDDER=hashing
 ```
 
 ## 2. Use The Three Core Commands

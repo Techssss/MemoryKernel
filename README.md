@@ -28,7 +28,7 @@ Install from a clone:
 ```bash
 git clone https://github.com/Techssss/MemoryKernel.git
 cd MemoryKernel
-python -m pip install -e ".[dev]"
+python -m pip install -e .
 ```
 
 Inside any project you want your agent to remember:
@@ -41,6 +41,23 @@ memk health
 
 No `init` step is required. The first memory command creates `.memk/`
 automatically.
+
+Base install is intentionally lightweight. It does not require torch,
+sentence-transformers, scikit-learn, or spaCy. MemoryKernel falls back to a
+deterministic local embedder so setup works offline. In `auto` mode, it uses the
+semantic model when installed and otherwise uses hashing.
+
+For stronger semantic recall, install the optional model stack:
+
+```bash
+python -m pip install -e ".[semantic]"
+```
+
+If model startup is slow or you want deterministic low-memory mode:
+
+```bash
+export MEMK_EMBEDDER=hashing
+```
 
 ## The Three Commands
 
@@ -160,6 +177,7 @@ openclaw mcp set memorykernel '{"command":"memk-mcp"}'
 - **Project scoped**: each repository gets its own `.memk/` memory.
 - **MCP-first**: agents can use memory tools directly.
 - **Local-first**: SQLite storage by default, no hosted dependency required.
+- **Light by default**: heavy embedding and NLP stacks are optional extras.
 - **Agent context**: `memk context` turns recalled memory into a compact prompt
   block.
 - **Developer friendly**: CLI, REST API, Python SDK, and Node.js SDK.
@@ -265,7 +283,7 @@ python -m pytest -q -rs tests
 Current verified result on April 28, 2026:
 
 ```text
-135 passed, 28 skipped
+137 passed, 28 skipped
 ```
 
 Expected skips:
