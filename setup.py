@@ -1,5 +1,5 @@
 """
-MemoryKernel - Local-first project brain for AI agents
+MemoryKernel - Project memory that AI agents can carry across sessions.
 """
 
 from setuptools import setup, find_packages

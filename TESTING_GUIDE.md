@@ -16,7 +16,7 @@ python -m pytest -q -rs tests
 Expected current result:
 
 ```text
-128 passed, 25 skipped
+135 passed, 28 skipped
 ```
 
 Skipped tests are intentional unless the required optional dependencies or environment flags are present:
@@ -71,6 +71,7 @@ The benchmark suite uses a deterministic lightweight embedder so it can run with
 - `bench/retrieval.py`: semantic-style and multi-hop retrieval checks.
 - `bench/graph_bench.py`: graph propagation latency under density pressure.
 - `bench/sync_bench.py`: hybrid oplog/Merkle recovery and conflict detection.
+- `bench/ivf.py`: IVF routing benchmark for the in-memory vector index.
 - `bench/runner.py`: orchestrates all benchmark modules and writes the report.
 
 ## Known Gaps

@@ -8,6 +8,14 @@ __pycache__/
 dist/
 build/
 .pytest_cache/
+.pytest-cache-files-*/
+pytest-cache-files-*/
+.pytest-*/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
 
 # Virtual Environment
 .venv/
@@ -66,6 +74,7 @@ Documents/
 
 # Node
 node_modules/
+sdk/nodejs/dist/
 
 # OS files
 .DS_Store

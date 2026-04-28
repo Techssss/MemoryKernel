@@ -178,6 +178,7 @@ MemoryKernel/
     core/               Runtime, embedding, jobs, metrics, services
     extraction/         Fact/entity extraction paths
     ingestion/          Git ingestion
+    mcp/                MCP stdio server for agent tools
     retrieval/          Index and hybrid retrieval
     server/             Local daemon and process manager
     storage/            SQLite schema, migrations, graph repository
@@ -188,8 +189,8 @@ MemoryKernel/
   sdk/nodejs/           Node.js SDK
   bench/                Synthetic benchmark and stress runners
   tests/                Pytest suite
-  examples/             Usage examples and demos
-  docs/                 Architecture notes and benchmark reports
+  examples/             Focused integration examples
+  docs/                 User, integration, and operations docs
 ```
 
 Local runtime state belongs in `.memk/`, `.tmp/`, `tmp_*`, and generated `.db` files.
@@ -236,11 +237,7 @@ The current offline benchmark validates pipeline behavior with a deterministic
 lightweight embedder. It is useful for regression and bottleneck detection, but it is
 not a claim about final production embedding quality.
 
-The latest generated report is written to:
-
-```text
-docs/deep_stress_test_report.md
-```
+Benchmark reports are generated locally and ignored by Git.
 
 ## Development Notes
 
@@ -257,9 +254,11 @@ docs/deep_stress_test_report.md
 
 ## Documentation
 
+- [Docs Index](./docs/README.md)
 - [First 10 Minutes](./docs/quickstart_first_10_minutes.md)
 - [Agent Setup](./docs/agent_setup.md)
 - [MCP Tools](./docs/mcp_tools.md)
+- [Architecture](./docs/architecture.md)
 - [Troubleshooting](./docs/troubleshooting.md)
 - [Compatibility Matrix](./docs/compatibility.md)
 - [REST API v1](./docs/api_v1.md)

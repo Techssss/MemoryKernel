@@ -25,6 +25,8 @@ The benchmark runner writes:
 docs/deep_stress_test_report.md
 ```
 
+That file is generated output and is ignored by Git.
+
 ## Current Scope
 
 Benchmarks use deterministic synthetic data and a lightweight deterministic

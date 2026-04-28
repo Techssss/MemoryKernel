@@ -32,6 +32,14 @@ Use case:
 - Search for similar incidents.
 - Build a response context for a new ticket.
 
+## SDK And Workflow Examples
+
+- `examples/sdk_python_basic.py`: minimal Python SDK usage.
+- `examples/sdk_python_agent.py`: agent-oriented Python SDK flow.
+- `examples/local_agent_demo.py`: direct local agent memory flow.
+- `examples/git_ingestion_demo.py`: ingest recent Git history.
+- `examples/terminal_workflow.sh`: shell workflow for CLI usage.
+
 ## Running Examples
 
 Start the daemon first:
